@@ -1,13 +1,14 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { CalendarDays, User } from "lucide-react";
+import { AlertTriangle, CalendarDays, FileText, ListChecks } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { EmptyState } from "@/components/empty-state";
 import { getSummary, type SummaryRead } from "@/lib/api";
-import { formatJalali } from "@/lib/rtl";
+import { dirOf, formatJalali } from "@/lib/rtl";
 
 interface ActionItemsViewProps {
   meetingId: string;
@@ -36,19 +37,19 @@ export function ActionItemsView({ meetingId }: ActionItemsViewProps) {
   if (isError) {
     if (isNotFound(error)) {
       return (
-        <Card>
-          <CardContent className="py-6 text-center text-sm text-muted-foreground">
-            خلاصه هنوز آماده نیست
-          </CardContent>
-        </Card>
+        <EmptyState
+          icon={FileText}
+          title="خلاصه هنوز آماده نیست"
+          hint="پس از پایان پردازش، اقدامات اینجا فهرست می‌شوند."
+        />
       );
     }
     return (
-      <Card>
-        <CardContent className="py-6 text-center text-sm text-destructive">
-          خطا در بارگذاری موارد اقدام
-        </CardContent>
-      </Card>
+      <EmptyState
+        icon={AlertTriangle}
+        title="خطا در بارگذاری موارد اقدام"
+        tone="destructive"
+      />
     );
   }
 
@@ -56,39 +57,47 @@ export function ActionItemsView({ meetingId }: ActionItemsViewProps) {
 
   if (data.action_items.length === 0) {
     return (
-      <Card>
-        <CardContent className="py-6 text-center text-sm text-muted-foreground">
-          هیچ مورد اقدامی استخراج نشد
-        </CardContent>
-      </Card>
+      <EmptyState
+        icon={ListChecks}
+        title="مورد اقدامی استخراج نشد"
+        hint="در این جلسه وظیفه‌ی مشخصی برای پیگیری شناسایی نشد."
+      />
     );
   }
 
   return (
-    <div className="space-y-2" dir="rtl">
+    <ol className="space-y-2" dir="rtl">
       {data.action_items.map((item, idx) => (
-        <Card key={idx} size="sm">
-          <CardContent className="space-y-2">
-            <p className="text-sm font-semibold leading-6">{item.text}</p>
-            {(item.owner || item.due_date) && (
-              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                {item.owner && (
-                  <span className="inline-flex items-center gap-1">
-                    <User className="size-3.5" />
-                    <Badge variant="secondary">{item.owner}</Badge>
-                  </span>
-                )}
-                {item.due_date && (
-                  <span className="inline-flex items-center gap-1">
-                    <CalendarDays className="size-3.5" />
-                    <span>{formatJalali(item.due_date)}</span>
-                  </span>
+        <li key={idx}>
+          <Card size="sm" className="transition-colors hover:border-foreground/20">
+            <CardContent className="flex items-start gap-3">
+              <span className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-full bg-primary/10 text-xs font-semibold text-primary tabular-nums">
+                {idx + 1}
+              </span>
+              <div className="min-w-0 flex-1 space-y-2">
+                <p className="text-sm font-medium leading-7" dir={dirOf(item.text)}>
+                  {item.text}
+                </p>
+                {(item.owner || item.due_date) && (
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                    {item.owner && (
+                      <Badge variant="secondary" dir={dirOf(item.owner)}>
+                        {item.owner}
+                      </Badge>
+                    )}
+                    {item.due_date && (
+                      <span className="inline-flex items-center gap-1 tabular-nums">
+                        <CalendarDays className="size-3.5" />
+                        <span>{formatJalali(item.due_date)}</span>
+                      </span>
+                    )}
+                  </div>
                 )}
               </div>
-            )}
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        </li>
       ))}
-    </div>
+    </ol>
   );
 }

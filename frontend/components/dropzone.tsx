@@ -62,9 +62,9 @@ export function Dropzone({ onFilePicked, disabled, className }: DropzoneProps) {
     <div
       {...getRootProps({
         className: cn(
-          "group flex h-full min-h-44 cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-input bg-card/50 p-6 text-center transition-colors",
-          "hover:border-ring hover:bg-muted/40",
-          isDragActive && "border-ring bg-muted/60",
+          "group flex h-full min-h-44 cursor-pointer flex-col items-center justify-center gap-3 rounded-lg border-2 border-dashed border-input bg-card/40 p-6 text-center transition-all",
+          "hover:border-primary/50 hover:bg-primary/5",
+          isDragActive && "border-primary bg-primary/10 ring-3 ring-primary/15",
           isDragReject && "border-destructive bg-destructive/5",
           disabled && "cursor-not-allowed opacity-60",
           className,
@@ -72,15 +72,15 @@ export function Dropzone({ onFilePicked, disabled, className }: DropzoneProps) {
       })}
     >
       <input {...getInputProps()} />
-      <div className="flex size-12 items-center justify-center rounded-full bg-muted text-muted-foreground transition-colors group-hover:bg-primary/10 group-hover:text-primary">
-        <Upload className="size-6" />
+      <div className="grid size-12 place-items-center rounded-full bg-muted text-muted-foreground transition-colors group-hover:bg-primary/15 group-hover:text-primary">
+        <Upload className="size-5" />
       </div>
       <div className="space-y-1">
         <p className="text-sm font-medium">
           فایل صوتی را اینجا بکشید یا کلیک کنید
         </p>
-        <p className="text-xs text-muted-foreground">
-          MP3، WAV، M4A، WEBM، OGG یا MP4 — تا ۵۰۰ مگابایت
+        <p className="text-[11px] text-muted-foreground">
+          MP3 · WAV · M4A · WEBM · OGG · MP4 — تا ۵۰۰ مگابایت
         </p>
       </div>
     </div>

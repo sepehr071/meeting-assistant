@@ -1,19 +1,22 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
+import { Calendar, Clock, Inbox, Layers, SearchX, X } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-  CardDescription,
-} from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
+import { EmptyState } from "@/components/empty-state";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { MeetingStatus } from "@/components/meeting-status";
 import { UploadSection } from "@/components/upload-section";
@@ -22,6 +25,7 @@ import {
   listSeries,
   listTags,
   type Meeting,
+  type SeriesWithCount,
 } from "@/lib/api";
 import { dirOf } from "@/lib/rtl";
 
@@ -52,26 +56,63 @@ function formatDuration(seconds: number | null): string | null {
   return `${mm}:${ss}`;
 }
 
-function MeetingCard({ meeting }: { meeting: Meeting }) {
+function MeetingCard({
+  meeting,
+  series,
+}: {
+  meeting: Meeting;
+  series?: SeriesWithCount;
+}) {
   const label = meeting.title?.trim() || meeting.original_filename;
   const duration = formatDuration(meeting.duration_s);
   return (
-    <Link href={`/meetings/${meeting.id}`} className="block">
-      <Card className="transition-colors hover:bg-muted/40">
-        <CardHeader>
-          <CardTitle dir={dirOf(label)} className="truncate">
-            {label}
-          </CardTitle>
-          <CardDescription className="flex flex-wrap items-center gap-3">
-            <span>{relativeFa(meeting.created_at)}</span>
-            {duration && <span className="tabular-nums">{duration}</span>}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <MeetingStatus
-            meetingId={meeting.id}
-            initialStatus={meeting.status}
-          />
+    <Link
+      href={`/meetings/${meeting.id}`}
+      className="group block rounded-xl outline-none focus-visible:ring-3 focus-visible:ring-ring/40"
+    >
+      <Card className="transition-all group-hover:-translate-y-px group-hover:border-foreground/20 group-hover:shadow-sm">
+        <CardContent className="space-y-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 flex-1 space-y-1.5">
+              <h3
+                dir={dirOf(label)}
+                className="truncate text-base font-semibold leading-6 tracking-tight"
+              >
+                {label}
+              </h3>
+              <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+                <span className="inline-flex items-center gap-1">
+                  <Calendar className="size-3.5" />
+                  <span>{relativeFa(meeting.created_at)}</span>
+                </span>
+                {duration && (
+                  <span className="inline-flex items-center gap-1 font-mono tabular-nums">
+                    <Clock className="size-3.5" />
+                    <span>{duration}</span>
+                  </span>
+                )}
+              </div>
+            </div>
+            <MeetingStatus
+              meetingId={meeting.id}
+              initialStatus={meeting.status}
+            />
+          </div>
+          {series && (
+            <div className="flex items-center gap-1.5 text-xs">
+              <span
+                className="size-1.5 rounded-full bg-primary"
+                aria-hidden="true"
+              />
+              <span
+                className="inline-flex items-center gap-1 truncate text-muted-foreground"
+                dir={dirOf(series.name)}
+              >
+                <Layers className="size-3" />
+                <span className="truncate">{series.name}</span>
+              </span>
+            </div>
+          )}
         </CardContent>
       </Card>
     </Link>
@@ -92,6 +133,12 @@ function MeetingsList() {
     queryFn: listTags,
   });
 
+  const seriesById = useMemo(() => {
+    const map: Record<string, SeriesWithCount> = {};
+    for (const s of seriesList ?? []) map[s.id] = s;
+    return map;
+  }, [seriesList]);
+
   const filterKey = [seriesId ?? "", tagIds.join(","), q.trim()];
   const { data, isLoading, isError } = useQuery<Meeting[]>({
     queryKey: ["meetings", ...filterKey],
@@ -103,78 +150,83 @@ function MeetingsList() {
       }),
   });
 
-  const filtersActive = seriesId || tagIds.length > 0 || q.trim();
-
-  if (isLoading) {
-    return (
-      <div className="grid gap-3">
-        {[0, 1, 2].map((i) => (
-          <Skeleton key={i} className="h-24 w-full" />
-        ))}
-      </div>
-    );
-  }
-
-  if (isError) {
-    return (
-      <p className="text-sm text-destructive">خطا در بارگذاری فهرست جلسات</p>
-    );
-  }
+  const filtersActive = !!(seriesId || tagIds.length > 0 || q.trim());
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-end gap-3 rounded-md border p-3">
-        <div className="space-y-1">
-          <label className="text-xs text-muted-foreground">سری</label>
-          <select
+      <div
+        className="flex flex-wrap items-end gap-3 rounded-lg border border-border bg-card/40 p-3"
+        dir="rtl"
+      >
+        <div className="min-w-44 space-y-1">
+          <label className="text-[11px] font-medium text-muted-foreground">
+            سری
+          </label>
+          <Select
             value={seriesId ?? ""}
-            onChange={(e) => setSeriesId(e.target.value || null)}
-            className="rounded-md border border-input bg-transparent px-2 py-1.5 text-sm"
+            onValueChange={(v) => setSeriesId((v as string) || null)}
           >
-            <option value="">— همه —</option>
-            {(seriesList ?? []).map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
+            <SelectTrigger className="h-9">
+              <SelectValue
+                placeholder="— همه —"
+                children={
+                  seriesId && seriesById[seriesId]
+                    ? seriesById[seriesId].name
+                    : undefined
+                }
+              />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="">— همه —</SelectItem>
+              {(seriesList ?? []).map((s) => (
+                <SelectItem key={s.id} value={s.id}>
+                  {s.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
         <div className="space-y-1">
-          <label className="text-xs text-muted-foreground">جستجو در عنوان</label>
+          <label className="text-[11px] font-medium text-muted-foreground">
+            جستجو
+          </label>
           <Input
             dir="auto"
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="..."
-            className="h-9 w-44"
+            placeholder="عنوان جلسه…"
+            className="h-9 w-48"
           />
         </div>
         <div className="flex-1 space-y-1">
-          <label className="text-xs text-muted-foreground">برچسب‌ها</label>
-          <div className="flex flex-wrap gap-1">
-            {(tagsList ?? []).length === 0 && (
-              <span className="text-xs text-muted-foreground">—</span>
+          <label className="text-[11px] font-medium text-muted-foreground">
+            برچسب‌ها
+          </label>
+          <div className="flex min-h-9 flex-wrap items-center gap-1.5">
+            {(tagsList ?? []).length === 0 ? (
+              <span className="text-[11px] text-muted-foreground">—</span>
+            ) : (
+              (tagsList ?? []).map((t) => {
+                const active = tagIds.includes(t.id);
+                return (
+                  <Badge
+                    key={t.id}
+                    variant={active ? "default" : "outline"}
+                    className="cursor-pointer transition-colors"
+                    onClick={() =>
+                      setTagIds((prev) =>
+                        prev.includes(t.id)
+                          ? prev.filter((x) => x !== t.id)
+                          : [...prev, t.id],
+                      )
+                    }
+                    dir={dirOf(t.name)}
+                  >
+                    {t.name}
+                  </Badge>
+                );
+              })
             )}
-            {(tagsList ?? []).map((t) => {
-              const active = tagIds.includes(t.id);
-              return (
-                <Badge
-                  key={t.id}
-                  variant={active ? "default" : "outline"}
-                  className="cursor-pointer"
-                  onClick={() =>
-                    setTagIds((prev) =>
-                      prev.includes(t.id)
-                        ? prev.filter((x) => x !== t.id)
-                        : [...prev, t.id],
-                    )
-                  }
-                  dir={dirOf(t.name)}
-                >
-                  {t.name}
-                </Badge>
-              );
-            })}
           </div>
         </div>
         {filtersActive && (
@@ -187,19 +239,48 @@ function MeetingsList() {
               setQ("");
             }}
           >
-            پاک‌سازی
+            <X className="size-3.5" />
+            <span>پاک‌سازی</span>
           </Button>
         )}
       </div>
 
-      {!data || data.length === 0 ? (
-        <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-          {filtersActive ? "نتیجه‌ای با این فیلترها یافت نشد" : "هنوز جلسه‌ای ثبت نشده"}
+      {isLoading ? (
+        <div className="grid gap-3">
+          {[0, 1, 2].map((i) => (
+            <Skeleton key={i} className="h-24 w-full" />
+          ))}
         </div>
+      ) : isError ? (
+        <Card>
+          <CardContent className="py-6 text-center text-sm text-destructive">
+            خطا در بارگذاری فهرست جلسات
+          </CardContent>
+        </Card>
+      ) : !data || data.length === 0 ? (
+        filtersActive ? (
+          <EmptyState
+            icon={SearchX}
+            title="نتیجه‌ای با این فیلترها یافت نشد"
+            hint="فیلترها را تغییر دهید یا پاک کنید."
+          />
+        ) : (
+          <EmptyState
+            icon={Inbox}
+            title="هنوز جلسه‌ای ثبت نشده"
+            hint="نخستین جلسه‌ی خود را از فرم بالا بارگذاری یا ضبط کنید."
+          />
+        )
       ) : (
         <div className="grid gap-3">
           {data.map((m) => (
-            <MeetingCard key={m.id} meeting={m} />
+            <MeetingCard
+              key={m.id}
+              meeting={m}
+              series={
+                m.series_id ? seriesById[m.series_id] : undefined
+              }
+            />
           ))}
         </div>
       )}
@@ -209,30 +290,18 @@ function MeetingsList() {
 
 export default function HomePage() {
   return (
-    <main className="container mx-auto max-w-5xl space-y-8 p-6">
-      <header className="flex items-end justify-between gap-4">
-        <div className="space-y-1">
-          <h1 className="text-3xl font-bold">دستیار جلسه</h1>
-          <p className="text-muted-foreground">
-            رونویسی و خلاصه‌سازی هوشمند جلسات فارسی
-          </p>
-        </div>
-        <nav className="flex gap-2">
-          <Link href="/series">
-            <Button variant="ghost" size="sm">
-              سری‌ها
-            </Button>
-          </Link>
-          <Link href="/tags">
-            <Button variant="ghost" size="sm">
-              برچسب‌ها
-            </Button>
-          </Link>
-        </nav>
+    <main className="mx-auto max-w-6xl space-y-8 px-6 py-8">
+      <header className="space-y-1">
+        <h1 className="text-3xl font-bold tracking-tight">جلسات شما</h1>
+        <p className="text-sm text-muted-foreground">
+          رونویسی و خلاصه‌سازی هوشمند جلسات فارسی.
+        </p>
       </header>
       <UploadSection />
       <section className="space-y-3">
-        <h2 className="text-xl font-semibold">جلسات اخیر</h2>
+        <div className="flex items-end justify-between">
+          <h2 className="text-lg font-semibold tracking-tight">جلسات اخیر</h2>
+        </div>
         <MeetingsList />
       </section>
     </main>

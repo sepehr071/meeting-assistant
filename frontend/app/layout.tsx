@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Vazirmatn } from "next/font/google";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { TopNav } from "@/components/top-nav";
 import { Providers } from "./providers";
 import "./globals.css";
 
@@ -24,9 +25,12 @@ export default function RootLayout({
       dir="rtl"
       className={`${vazirmatn.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">
+      <body className="flex min-h-full flex-col bg-background text-foreground">
         <Providers>
-          <TooltipProvider>{children}</TooltipProvider>
+          <TooltipProvider>
+            <TopNav />
+            <div className="flex-1">{children}</div>
+          </TooltipProvider>
           <Toaster richColors />
         </Providers>
       </body>

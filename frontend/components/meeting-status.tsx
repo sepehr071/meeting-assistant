@@ -8,7 +8,6 @@ import {
   type MeetingStatus as MeetingStatusValue,
 } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
 import {
   Tooltip,
   TooltipContent,
@@ -29,14 +28,6 @@ const LABELS: Record<MeetingStatusValue, string> = {
   done: "آماده",
   failed: "خطا",
 };
-
-type BadgeVariant = "default" | "secondary" | "destructive";
-
-function variantFor(status: MeetingStatusValue): BadgeVariant {
-  if (status === "uploaded") return "secondary";
-  if (status === "failed") return "destructive";
-  return "default";
-}
 
 export interface MeetingStatusProps {
   meetingId: string;
@@ -64,7 +55,7 @@ export function MeetingStatus({
     if (isLoading) {
       return (
         <Badge variant="secondary" className={className}>
-          ...
+          …
         </Badge>
       );
     }
@@ -76,35 +67,56 @@ export function MeetingStatus({
     status === "failed" && data?.error_message === CANCELLED_SENTINEL;
   const label = isCancelled ? "متوقف شده" : LABELS[status];
 
+  const dotClass =
+    status === "done"
+      ? "bg-success"
+      : status === "failed"
+        ? isCancelled
+          ? "bg-muted-foreground"
+          : "bg-destructive"
+        : status === "uploaded"
+          ? "bg-muted-foreground"
+          : "bg-primary";
+
+  const variant: "default" | "secondary" | "destructive" =
+    status === "done"
+      ? "default"
+      : status === "failed"
+        ? isCancelled
+          ? "secondary"
+          : "destructive"
+        : "secondary";
+
   const badge = (
     <Badge
-      variant={isCancelled ? "secondary" : variantFor(status)}
+      variant={variant}
       className={cn(
-        status === "done" && "bg-emerald-500 text-white border-transparent",
+        "gap-1.5 transition-colors duration-300",
+        status === "done" &&
+          "bg-success text-success-foreground border-transparent",
         className,
       )}
     >
-      {label}
+      <span
+        className={cn(
+          "size-1.5 rounded-full",
+          dotClass,
+          inFlight && "animate-pulse-dot",
+        )}
+        aria-hidden="true"
+      />
+      <span>{label}</span>
     </Badge>
   );
 
-  return (
-    <div className="inline-flex items-center gap-2">
-      {status === "failed" && data?.error_message && !isCancelled ? (
-        <Tooltip>
-          <TooltipTrigger render={<span tabIndex={0}>{badge}</span>} />
-          <TooltipContent>{data.error_message}</TooltipContent>
-        </Tooltip>
-      ) : (
-        badge
-      )}
-      {inFlight && (
-        <Progress
-          value={null}
-          className="w-20"
-          aria-label={label}
-        />
-      )}
-    </div>
-  );
+  if (status === "failed" && data?.error_message && !isCancelled) {
+    return (
+      <Tooltip>
+        <TooltipTrigger render={<span tabIndex={0}>{badge}</span>} />
+        <TooltipContent>{data.error_message}</TooltipContent>
+      </Tooltip>
+    );
+  }
+
+  return badge;
 }

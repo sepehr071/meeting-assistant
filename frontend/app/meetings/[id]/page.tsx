@@ -1,10 +1,15 @@
 "use client";
 
 import { useEffect } from "react";
-import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, CircleStop, RefreshCw } from "lucide-react";
+import {
+  AlertTriangle,
+  Calendar,
+  CircleStop,
+  Clock,
+  RefreshCw,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { ActionItemsView } from "@/components/action-items-view";
@@ -18,7 +23,6 @@ import { SummaryView } from "@/components/summary-view";
 import { TranscriptView } from "@/components/transcript-view";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Tabs,
@@ -42,6 +46,17 @@ const PROCESSING_LABELS: Record<string, string> = {
   transcribing: "درحال رونویسی صدا…",
   summarizing: "درحال خلاصه‌سازی…",
 };
+
+const TABS = [
+  { value: "summary", label: "خلاصه" },
+  { value: "actions", label: "اقدامات" },
+  { value: "decisions", label: "تصمیم‌ها" },
+  { value: "qa", label: "پرسش‌وپاسخ" },
+  { value: "open", label: "مسائل باز" },
+  { value: "email", label: "پیش‌نویس ایمیل" },
+  { value: "minutes", label: "صورتجلسه" },
+  { value: "transcript", label: "رونوشت" },
+] as const;
 
 function formatDuration(seconds: number | null): string | null {
   if (seconds == null) return null;
@@ -70,8 +85,6 @@ export default function MeetingDetailPage() {
   const regenerateMut = useMutation({
     mutationFn: () => regenerate(id),
     onMutate: () => {
-      // Optimistic flip so the processing banner shows immediately and
-      // refetchInterval picks up again without waiting for the round-trip.
       queryClient.setQueryData<MeetingDetail>(["meeting", id], (old) =>
         old ? { ...old, status: "summarizing" } : old,
       );
@@ -112,8 +125,6 @@ export default function MeetingDetailPage() {
   const duration = formatDuration(meeting?.duration_s ?? null);
   const status = meeting?.status;
 
-  // Once processing completes, force-refetch the dependent queries that may
-  // have cached a 404 while the pipeline was still running.
   useEffect(() => {
     if (status === "done" || status === "failed") {
       queryClient.invalidateQueries({ queryKey: ["meeting", id] });
@@ -122,116 +133,132 @@ export default function MeetingDetailPage() {
     }
   }, [status, id, queryClient]);
 
-  return (
-    <main className="container mx-auto max-w-5xl space-y-6 p-6">
-      <div>
-        <Link
-          href="/"
-          className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
-        >
-          <ArrowRight className="size-4" />
-          <span>بازگشت به فهرست</span>
-        </Link>
-      </div>
+  const inFlight = !!(status && IN_FLIGHT.has(status));
+  const isCancelled =
+    status === "failed" && meeting?.error_message === CANCELLED_SENTINEL;
 
-      <header className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0 flex-1 space-y-1 text-right">
-          {meetingQ.isLoading ? (
-            <Skeleton className="h-7 w-64" />
-          ) : (
-            <h1
-              dir={title ? dirOf(title) : "rtl"}
-              className="truncate text-2xl font-bold"
-            >
-              {title || "—"}
-            </h1>
-          )}
-          <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-            {meeting?.created_at && (
-              <span>{formatJalali(meeting.created_at)}</span>
+  return (
+    <main className="mx-auto max-w-6xl space-y-6 px-6 py-8">
+      <header className="space-y-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 flex-1 space-y-1.5">
+            {meetingQ.isLoading ? (
+              <Skeleton className="h-8 w-72" />
+            ) : (
+              <h1
+                dir={title ? dirOf(title) : "rtl"}
+                className="truncate text-2xl font-bold tracking-tight"
+              >
+                {title || "—"}
+              </h1>
             )}
-            {duration && <span className="font-mono tabular-nums">{duration}</span>}
+            <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+              {meeting?.created_at && (
+                <span className="inline-flex items-center gap-1">
+                  <Calendar className="size-3.5" />
+                  <span>{formatJalali(meeting.created_at)}</span>
+                </span>
+              )}
+              {duration && (
+                <span className="inline-flex items-center gap-1 font-mono tabular-nums">
+                  <Clock className="size-3.5" />
+                  <span>{duration}</span>
+                </span>
+              )}
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            {meeting && (
+              <MeetingStatus meetingId={id} initialStatus={meeting.status} />
+            )}
+            {inFlight && (
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => cancelMut.mutate()}
+                disabled={cancelMut.isPending}
+              >
+                <CircleStop
+                  className={
+                    cancelMut.isPending ? "animate-pulse" : undefined
+                  }
+                />
+                <span>توقف</span>
+              </Button>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => regenerateMut.mutate()}
+              disabled={regenerateMut.isPending || !meeting || status !== "done"}
+            >
+              <RefreshCw
+                className={
+                  regenerateMut.isPending ? "animate-spin" : undefined
+                }
+              />
+              <span>بازتولید</span>
+            </Button>
           </div>
         </div>
-        <div className="shrink-0">
-          {meeting && (
-            <MeetingStatus meetingId={id} initialStatus={meeting.status} />
-          )}
-        </div>
+
+        {inFlight && (
+          <div
+            className="flex items-center gap-3 rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-sm text-foreground/85"
+            dir="rtl"
+            aria-live="polite"
+          >
+            <span
+              className="inline-flex size-2 shrink-0 rounded-full bg-primary animate-pulse-dot"
+              aria-hidden="true"
+            />
+            <span className="flex-1">
+              {PROCESSING_LABELS[status!] ?? "درحال پردازش…"}
+            </span>
+          </div>
+        )}
       </header>
 
-      <div className="flex justify-end gap-2">
-        {status && IN_FLIGHT.has(status) && (
-          <Button
-            variant="destructive"
-            size="sm"
-            onClick={() => cancelMut.mutate()}
-            disabled={cancelMut.isPending}
-          >
-            <CircleStop
-              className={cancelMut.isPending ? "animate-pulse" : undefined}
-            />
-            <span>توقف پردازش</span>
-          </Button>
-        )}
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => regenerateMut.mutate()}
-          disabled={regenerateMut.isPending || !meeting || status !== "done"}
-        >
-          <RefreshCw
-            className={regenerateMut.isPending ? "animate-spin" : undefined}
-          />
-          <span>بازتولید خلاصه</span>
-        </Button>
-      </div>
-
-      {status && IN_FLIGHT.has(status) && (
-        <div
-          className="flex items-center gap-3 rounded-md border bg-muted/40 px-3 py-2 text-sm text-muted-foreground"
-          dir="rtl"
-          aria-live="polite"
-        >
-          <RefreshCw className="size-4 animate-spin text-primary" />
-          <span className="flex-1">{PROCESSING_LABELS[status] ?? "درحال پردازش…"}</span>
-          <Progress value={null} className="w-32 shrink-0" />
-        </div>
-      )}
-
       {status === "failed" ? (
-        meeting?.error_message === CANCELLED_SENTINEL ? (
+        isCancelled ? (
           <Card>
             <CardContent
               className="space-y-1 py-4 text-sm text-muted-foreground"
               dir="rtl"
             >
               <p className="font-semibold text-foreground">پردازش متوقف شد</p>
-              <p>این جلسه توسط کاربر متوقف شد. می‌توانید دوباره بارگذاری کنید.</p>
+              <p>
+                این جلسه توسط کاربر متوقف شد. می‌توانید دوباره بارگذاری کنید.
+              </p>
             </CardContent>
           </Card>
         ) : (
-          <Card>
-            <CardContent className="space-y-1 py-4 text-sm text-destructive" dir="rtl">
-              <p className="font-semibold">خطا در پردازش جلسه</p>
-              <p className="text-muted-foreground">
-                {meeting?.error_message || "خطای ناشناخته"}
-              </p>
+          <Card className="border-destructive/30 bg-destructive/5">
+            <CardContent className="flex items-start gap-3 py-4 text-sm" dir="rtl">
+              <AlertTriangle className="mt-0.5 size-5 shrink-0 text-destructive" />
+              <div className="space-y-1">
+                <p className="font-semibold text-destructive">خطا در پردازش جلسه</p>
+                <p className="text-muted-foreground">
+                  {meeting?.error_message || "خطای ناشناخته"}
+                </p>
+              </div>
             </CardContent>
           </Card>
         )
       ) : (
         <Tabs defaultValue="summary" className="w-full">
-          <TabsList className="w-full flex-wrap">
-            <TabsTrigger value="summary">خلاصه</TabsTrigger>
-            <TabsTrigger value="actions">اقدامات</TabsTrigger>
-            <TabsTrigger value="decisions">تصمیم‌ها</TabsTrigger>
-            <TabsTrigger value="qa">پرسش‌وپاسخ</TabsTrigger>
-            <TabsTrigger value="open">مسائل باز</TabsTrigger>
-            <TabsTrigger value="email">پیش‌نویس ایمیل</TabsTrigger>
-            <TabsTrigger value="minutes">صورتجلسه</TabsTrigger>
-            <TabsTrigger value="transcript">رونوشت</TabsTrigger>
-          </TabsList>
+          <div
+            className="-mx-1 overflow-x-auto scrollbar-none mask-fade-x"
+            dir="rtl"
+          >
+            <TabsList className="px-1">
+              {TABS.map((t) => (
+                <TabsTrigger key={t.value} value={t.value}>
+                  {t.label}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </div>
           <TabsContent value="summary" className="pt-2">
             <SummaryView meetingId={id} />
           </TabsContent>

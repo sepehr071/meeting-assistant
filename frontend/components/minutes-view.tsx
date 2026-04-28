@@ -2,11 +2,19 @@
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Pencil, Search, X } from "lucide-react";
+import {
+  AlertTriangle,
+  FileText,
+  ListTree,
+  Pencil,
+  Search,
+  X,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { EmptyState } from "@/components/empty-state";
 import { Input } from "@/components/ui/input";
 import {
   Popover,
@@ -209,20 +217,14 @@ export function MinutesView({ meetingId }: MinutesViewProps) {
 
   if (summaryQ.isError) {
     if (isNotFound(summaryQ.error)) {
-      return (
-        <Card>
-          <CardContent className="py-6 text-center text-sm text-muted-foreground">
-            خلاصه هنوز آماده نیست
-          </CardContent>
-        </Card>
-      );
+      return <EmptyState icon={FileText} title="خلاصه هنوز آماده نیست" />;
     }
     return (
-      <Card>
-        <CardContent className="py-6 text-center text-sm text-destructive">
-          خطا در بارگذاری صورتجلسه
-        </CardContent>
-      </Card>
+      <EmptyState
+        icon={AlertTriangle}
+        title="خطا در بارگذاری صورتجلسه"
+        tone="destructive"
+      />
     );
   }
 
@@ -230,11 +232,11 @@ export function MinutesView({ meetingId }: MinutesViewProps) {
 
   if (summaryQ.data.minutes.length === 0) {
     return (
-      <Card>
-        <CardContent className="py-6 text-center text-sm text-muted-foreground">
-          صورتجلسه‌ای استخراج نشد
-        </CardContent>
-      </Card>
+      <EmptyState
+        icon={ListTree}
+        title="صورتجلسه‌ای استخراج نشد"
+        hint="رونوشت کوتاه‌تر از آن بود که بخش‌بندی شود."
+      />
     );
   }
 
@@ -307,11 +309,11 @@ export function MinutesView({ meetingId }: MinutesViewProps) {
       </div>
 
       {filtered.length === 0 ? (
-        <Card>
-          <CardContent className="py-6 text-center text-sm text-muted-foreground">
-            موردی با این فیلتر پیدا نشد
-          </CardContent>
-        </Card>
+        <EmptyState
+          icon={Search}
+          title="موردی با این فیلتر پیدا نشد"
+          hint="جستجو یا انتخاب گویندگان را تغییر دهید."
+        />
       ) : (
         <div className="space-y-2">
           {filtered.map((segment, idx) => (

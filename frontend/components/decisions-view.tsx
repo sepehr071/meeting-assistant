@@ -1,9 +1,11 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { AlertTriangle, FileText, Gavel } from "lucide-react";
 
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { EmptyState } from "@/components/empty-state";
 import { getSummary, type SummaryRead } from "@/lib/api";
 
 interface DecisionsViewProps {
@@ -33,19 +35,15 @@ export function DecisionsView({ meetingId }: DecisionsViewProps) {
   if (isError) {
     if (isNotFound(error)) {
       return (
-        <Card>
-          <CardContent className="py-6 text-center text-sm text-muted-foreground">
-            خلاصه هنوز آماده نیست
-          </CardContent>
-        </Card>
+        <EmptyState icon={FileText} title="خلاصه هنوز آماده نیست" />
       );
     }
     return (
-      <Card>
-        <CardContent className="py-6 text-center text-sm text-destructive">
-          خطا در بارگذاری تصمیم‌ها
-        </CardContent>
-      </Card>
+      <EmptyState
+        icon={AlertTriangle}
+        title="خطا در بارگذاری تصمیم‌ها"
+        tone="destructive"
+      />
     );
   }
 
@@ -53,24 +51,24 @@ export function DecisionsView({ meetingId }: DecisionsViewProps) {
 
   if (data.decisions.length === 0) {
     return (
-      <Card>
-        <CardContent className="py-6 text-center text-sm text-muted-foreground">
-          تصمیمی استخراج نشد
-        </CardContent>
-      </Card>
+      <EmptyState
+        icon={Gavel}
+        title="تصمیمی استخراج نشد"
+        hint="هیچ تصمیم قطعی در این جلسه شناسایی نشد."
+      />
     );
   }
 
   return (
     <Card>
       <CardContent>
-        <ol dir="rtl" className="space-y-2 text-sm leading-7">
+        <ol dir="rtl" className="space-y-3 text-sm leading-7">
           {data.decisions.map((decision, idx) => (
-            <li key={idx} className="flex gap-2">
-              <span className="shrink-0 font-mono text-muted-foreground tabular-nums">
-                {idx + 1}.
+            <li key={idx} className="flex gap-3">
+              <span className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-full bg-primary/10 text-xs font-semibold text-primary tabular-nums">
+                {idx + 1}
               </span>
-              <span>{decision}</span>
+              <span className="flex-1">{decision}</span>
             </li>
           ))}
         </ol>

@@ -1,12 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Mic, Square, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Progress } from "@/components/ui/progress";
 import { LiveCaptions } from "@/components/live-captions";
 import {
   ScribeRealtimeClient,
@@ -14,9 +13,11 @@ import {
 } from "@/lib/scribe-realtime";
 import { int16ToBase64, pcmWorkletUrl } from "@/lib/pcm-worklet";
 import { getRealtimeToken, uploadMeeting } from "@/lib/api";
+import { cn } from "@/lib/utils";
 
 const SOFT_LIMIT_S = 6300;
 const HARD_LIMIT_S = 7200;
+const EQ_BARS = 14;
 
 function formatTimer(total: number): string {
   const s = Math.max(0, Math.floor(total));
@@ -27,6 +28,143 @@ function formatTimer(total: number): string {
   return `${mm}:${ss}`;
 }
 
+interface RecorderBodyProps {
+  recording: boolean;
+  uploading: boolean;
+  seconds: number;
+  level: number;
+  committed: string;
+  partial: string;
+  error: string | null;
+  onClick: () => void;
+}
+
+function EqMeter({
+  level,
+  active,
+}: {
+  level: number;
+  active: boolean;
+}) {
+  const bars = useMemo(() => Array.from({ length: EQ_BARS }), []);
+  return (
+    <div
+      className="flex h-9 flex-1 items-end gap-[3px]"
+      aria-hidden="true"
+    >
+      {bars.map((_, i) => {
+        const center = (EQ_BARS - 1) / 2;
+        const distance = Math.abs(i - center) / center;
+        const intensity = Math.max(0.06, level * (1 - distance * 0.7));
+        const heightPct = Math.min(100, 16 + intensity * 110);
+        return (
+          <span
+            key={i}
+            style={{ height: `${heightPct}%` }}
+            className={cn(
+              "w-[3px] rounded-full transition-[height,background-color] duration-100",
+              active
+                ? "bg-primary/80"
+                : "bg-muted-foreground/30",
+            )}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+function RecorderBody({
+  recording,
+  uploading,
+  seconds,
+  level,
+  committed,
+  partial,
+  error,
+  onClick,
+}: RecorderBodyProps) {
+  const buttonLabel = uploading
+    ? "در حال بارگذاری..."
+    : recording
+      ? "توقف ضبط"
+      : "شروع ضبط";
+
+  return (
+    <div className="space-y-4" dir="rtl">
+      <div className="flex items-center gap-4">
+        <button
+          type="button"
+          onClick={onClick}
+          disabled={uploading}
+          aria-label={buttonLabel}
+          className={cn(
+            "relative grid size-14 shrink-0 place-items-center rounded-full text-white shadow-sm transition-all outline-none",
+            "focus-visible:ring-3 focus-visible:ring-ring/50",
+            "active:scale-[0.97]",
+            "disabled:cursor-not-allowed disabled:opacity-60",
+            recording
+              ? "bg-destructive hover:bg-destructive/90"
+              : "bg-primary hover:bg-primary/90",
+          )}
+        >
+          {recording && (
+            <span
+              className="absolute inset-0 -z-10 rounded-full ring-4 ring-destructive/40 animate-record-ring"
+              aria-hidden="true"
+            />
+          )}
+          {uploading ? (
+            <Loader2 className="size-5 animate-spin" />
+          ) : recording ? (
+            <Square className="size-5 fill-current" />
+          ) : (
+            <Mic className="size-5" />
+          )}
+        </button>
+        <div className="flex-1 space-y-1.5">
+          <div className="flex items-center justify-between text-sm">
+            <span className="font-mono text-base font-semibold tabular-nums">
+              {formatTimer(seconds)}
+            </span>
+            <span
+              className={cn(
+                "inline-flex items-center gap-1.5 text-xs font-medium",
+                recording
+                  ? "text-destructive"
+                  : uploading
+                    ? "text-primary"
+                    : "text-muted-foreground",
+              )}
+            >
+              {recording && (
+                <span
+                  className="size-1.5 rounded-full bg-destructive animate-pulse-dot"
+                  aria-hidden="true"
+                />
+              )}
+              {recording
+                ? "در حال ضبط"
+                : uploading
+                  ? "بارگذاری"
+                  : "آماده"}
+            </span>
+          </div>
+          <EqMeter level={level} active={recording} />
+        </div>
+      </div>
+
+      <LiveCaptions committed={committed} partial={partial} />
+
+      {error ? (
+        <p className="text-sm text-destructive" role="alert">
+          {error}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 export function Recorder({
   title,
   numSpeakers,
@@ -34,6 +172,7 @@ export function Recorder({
   seriesId,
   tagIds,
   onUploaded,
+  inline = false,
 }: {
   title?: string;
   numSpeakers?: number | null;
@@ -41,6 +180,7 @@ export function Recorder({
   seriesId?: string | null;
   tagIds?: string[];
   onUploaded?: (id: string) => void;
+  inline?: boolean;
 }) {
   const [recording, setRecording] = useState(false);
   const [seconds, setSeconds] = useState(0);
@@ -438,54 +578,31 @@ export function Recorder({
     }
   }, [handleStart, handleStop, recording, uploading]);
 
-  const buttonLabel = uploading
-    ? "در حال بارگذاری..."
-    : recording
-      ? "توقف ضبط"
-      : "شروع ضبط";
+  const body = (
+    <RecorderBody
+      recording={recording}
+      uploading={uploading}
+      seconds={seconds}
+      level={level}
+      committed={committed}
+      partial={partial}
+      error={error}
+      onClick={onMicClick}
+    />
+  );
+
+  if (inline) {
+    return body;
+  }
 
   return (
     <Card>
       <CardHeader>
         <CardTitle>ضبط زنده</CardTitle>
       </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="flex items-center gap-4">
-          <Button
-            type="button"
-            size="icon-lg"
-            variant={recording ? "destructive" : "default"}
-            onClick={onMicClick}
-            disabled={uploading}
-            aria-label={buttonLabel}
-          >
-            {uploading ? (
-              <Loader2 className="size-5 animate-spin" />
-            ) : recording ? (
-              <Square className="size-5" />
-            ) : (
-              <Mic className="size-5" />
-            )}
-          </Button>
-          <div className="flex-1 space-y-2">
-            <div className="flex items-center justify-between text-sm tabular-nums">
-              <span className="font-medium">{formatTimer(seconds)}</span>
-              <span className="text-muted-foreground">
-                {recording ? "در حال ضبط" : uploading ? "بارگذاری" : "آماده"}
-              </span>
-            </div>
-            <Progress value={Math.round(level * 100)} />
-          </div>
-        </div>
-
-        <LiveCaptions committed={committed} partial={partial} />
-
-        {error ? (
-          <p className="text-sm text-destructive" role="alert">
-            {error}
-          </p>
-        ) : null}
-      </CardContent>
+      <CardContent>{body}</CardContent>
     </Card>
   );
 }
+
+export type { RecorderBodyProps };

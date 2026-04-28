@@ -3,12 +3,33 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { FileAudio, Mic, MonitorPlay, Plus, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs";
 import {
   Popover,
   PopoverContent,
@@ -37,6 +58,7 @@ export function UploadSection() {
   const [suggestion, setSuggestion] = useState<SeriesSuggestion | null>(null);
   const [uploading, setUploading] = useState(false);
   const [newSeriesName, setNewSeriesName] = useState("");
+  const [newSeriesOpen, setNewSeriesOpen] = useState(false);
   const router = useRouter();
   const queryClient = useQueryClient();
 
@@ -92,6 +114,7 @@ export function UploadSection() {
     try {
       const s = await createSeries({ name });
       setNewSeriesName("");
+      setNewSeriesOpen(false);
       setSeriesId(s.id);
       queryClient.invalidateQueries({ queryKey: ["series"] });
       toast.success("سری ساخته شد");
@@ -130,31 +153,37 @@ export function UploadSection() {
   }
 
   return (
-    <Card>
+    <Card className="overflow-hidden">
       <CardHeader>
-        <CardTitle>جلسه جدید</CardTitle>
+        <CardTitle className="text-base font-semibold">جلسه جدید</CardTitle>
+        <CardDescription>
+          فایل صوتی بارگذاری کنید، از میکروفون ضبط کنید، یا صدای تب دیگر را
+          بگیرید.
+        </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-4">
+      <CardContent className="space-y-6">
         <div className="grid gap-4 md:grid-cols-[1fr_140px]">
-          <div className="space-y-2">
+          <div className="space-y-1.5">
             <label
               htmlFor="meeting-title"
-              className="text-sm font-medium text-muted-foreground"
+              className="text-xs font-medium text-muted-foreground"
             >
-              عنوان (اختیاری)
+              عنوان <span className="opacity-60">(اختیاری)</span>
             </label>
             <Input
               id="meeting-title"
+              dir="auto"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder="مثلاً: استندآپ تیم بک‌اند"
               disabled={uploading}
+              className="h-9"
             />
           </div>
-          <div className="space-y-2">
+          <div className="space-y-1.5">
             <label
               htmlFor="meeting-num-speakers"
-              className="text-sm font-medium text-muted-foreground"
+              className="text-xs font-medium text-muted-foreground"
             >
               تعداد افراد
             </label>
@@ -168,68 +197,99 @@ export function UploadSection() {
               onChange={(e) => setNumSpeakersStr(e.target.value)}
               placeholder="خودکار"
               disabled={uploading}
+              className="h-9"
             />
           </div>
         </div>
-        <div className="space-y-2">
+
+        <div className="space-y-1.5">
           <label
             htmlFor="meeting-brief"
-            className="text-sm font-medium text-muted-foreground"
+            className="text-xs font-medium text-muted-foreground"
           >
-            توضیح کوتاه و افراد حاضر (اختیاری)
+            توضیح کوتاه و افراد حاضر <span className="opacity-60">(اختیاری)</span>
           </label>
-          <textarea
+          <Textarea
             id="meeting-brief"
+            dir="auto"
             value={meetingBrief}
             onChange={(e) => setMeetingBrief(e.target.value)}
             placeholder="مثال: جلسه‌ی هفتگی تیم پروژه‌ی X. حضار: سپهر (بک‌اند)، علی (فرانت)، مریم (PM). موضوع: بررسی بلاکر دیپلوی."
             disabled={uploading}
             rows={3}
-            className="flex min-h-16 w-full rounded-md border border-input bg-transparent px-3 py-2 text-base shadow-xs placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50 md:text-sm"
           />
-          <p className="text-xs text-muted-foreground">
+          <p className="text-[11px] leading-5 text-muted-foreground">
             این متن به مدل خلاصه‌ساز پاس داده می‌شود و برای نگاشت اسامی افراد به
             صداها استفاده می‌شود. روی رونوشت اثری نمی‌گذارد.
           </p>
         </div>
+
         <div className="grid gap-4 md:grid-cols-2">
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-muted-foreground">
-              سری (اختیاری)
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-muted-foreground">
+              سری <span className="opacity-60">(اختیاری)</span>
             </label>
-            <div className="flex flex-wrap gap-2">
-              <select
+            <div className="flex gap-2">
+              <Select
                 value={seriesId ?? ""}
-                onChange={(e) => setSeriesId(e.target.value || null)}
+                onValueChange={(v) =>
+                  setSeriesId((v as string) || null)
+                }
                 disabled={uploading}
-                className="flex-1 rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs"
               >
-                <option value="">— هیچ‌کدام —</option>
-                {(seriesList ?? []).map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
-                  </option>
-                ))}
-              </select>
-              <Popover>
+                <SelectTrigger className="flex-1">
+                  <SelectValue
+                    placeholder="— هیچ‌کدام —"
+                    children={
+                      seriesId && seriesById[seriesId]
+                        ? seriesById[seriesId].name
+                        : undefined
+                    }
+                  />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">— هیچ‌کدام —</SelectItem>
+                  {(seriesList ?? []).map((s) => (
+                    <SelectItem key={s.id} value={s.id}>
+                      {s.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Popover
+                open={newSeriesOpen}
+                onOpenChange={setNewSeriesOpen}
+              >
                 <PopoverTrigger
                   render={
-                    <Button variant="outline" size="sm" disabled={uploading}>
-                      + سری جدید
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={uploading}
+                      className="shrink-0"
+                    >
+                      <Plus className="size-4" />
+                      <span>سری جدید</span>
                     </Button>
                   }
                 />
-                <PopoverContent className="w-72 space-y-2">
+                <PopoverContent align="end" className="w-72 space-y-2">
                   <Input
                     dir="auto"
                     value={newSeriesName}
                     onChange={(e) => setNewSeriesName(e.target.value)}
                     placeholder="نام سری"
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && newSeriesName.trim()) {
+                        void handleCreateSeries();
+                      }
+                    }}
                   />
                   <Button
                     size="sm"
                     onClick={handleCreateSeries}
                     disabled={!newSeriesName.trim()}
+                    className="w-full"
                   >
                     ساخت
                   </Button>
@@ -240,75 +300,108 @@ export function UploadSection() {
               <button
                 type="button"
                 onClick={() => setSeriesId(suggestion.series_id)}
-                className="text-xs text-primary underline-offset-2 hover:underline"
+                className="inline-flex items-center gap-1 text-xs text-primary underline-offset-2 hover:underline"
                 dir={dirOf(suggestion.name)}
               >
-                پیشنهاد: «{suggestion.name}» (تطابق {Math.round(suggestion.score)}%)
+                <Sparkles className="size-3" />
+                <span>
+                  پیشنهاد: «{suggestion.name}» ({Math.round(suggestion.score)}%)
+                </span>
               </button>
             )}
             {seriesId && seriesById[seriesId] && (
-              <p className="text-xs text-muted-foreground">
+              <p className="text-[11px] text-muted-foreground">
                 لحن ایمیل:{" "}
-                {seriesById[seriesId]!.email_tone === "formal"
-                  ? "رسمی"
-                  : "خودمانی"}
+                <span className="font-medium text-foreground">
+                  {seriesById[seriesId]!.email_tone === "formal"
+                    ? "رسمی"
+                    : "خودمانی"}
+                </span>
               </p>
             )}
           </div>
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-muted-foreground">
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-muted-foreground">
               برچسب‌ها
             </label>
-            <div className="flex flex-wrap gap-1">
-              {(tagsList ?? []).map((t) => {
-                const active = tagIds.includes(t.id);
-                return (
-                  <Badge
-                    key={t.id}
-                    variant={active ? "default" : "outline"}
-                    className="cursor-pointer"
-                    onClick={() => !uploading && toggleTag(t.id)}
-                    dir={dirOf(t.name)}
-                  >
-                    {t.name}
-                  </Badge>
-                );
-              })}
-              {(tagsList ?? []).length === 0 && (
-                <span className="text-xs text-muted-foreground">
-                  برچسبی ثبت نشده. در صفحه‌ی برچسب‌ها اضافه کنید.
+            <div className="flex min-h-9 flex-wrap items-center gap-1.5">
+              {(tagsList ?? []).length === 0 ? (
+                <span className="text-[11px] text-muted-foreground">
+                  برچسبی ثبت نشده. از صفحه‌ی برچسب‌ها اضافه کنید.
                 </span>
+              ) : (
+                (tagsList ?? []).map((t) => {
+                  const active = tagIds.includes(t.id);
+                  return (
+                    <Badge
+                      key={t.id}
+                      variant={active ? "default" : "outline"}
+                      className="cursor-pointer transition-colors"
+                      onClick={() => !uploading && toggleTag(t.id)}
+                      dir={dirOf(t.name)}
+                    >
+                      {t.name}
+                    </Badge>
+                  );
+                })
               )}
             </div>
           </div>
         </div>
-        <div className="grid gap-4 md:grid-cols-3">
-          <Dropzone onFilePicked={handleFile} disabled={uploading} />
-          <Recorder
-            title={title.trim() || undefined}
-            numSpeakers={numSpeakers}
-            meetingBrief={meetingBrief.trim() || undefined}
-            seriesId={seriesId}
-            tagIds={tagIds}
-            onUploaded={(id) => {
-              clearFields();
-              queryClient.invalidateQueries({ queryKey: ["meetings"] });
-              router.push(`/meetings/${id}`);
-            }}
-          />
-          <TabRecorder
-            title={title.trim() || undefined}
-            numSpeakers={numSpeakers}
-            meetingBrief={meetingBrief.trim() || undefined}
-            seriesId={seriesId}
-            tagIds={tagIds}
-            onUploaded={(id) => {
-              clearFields();
-              queryClient.invalidateQueries({ queryKey: ["meetings"] });
-              router.push(`/meetings/${id}`);
-            }}
-          />
-        </div>
+
+        <Tabs defaultValue="file" className="w-full">
+          <TabsList className="w-fit">
+            <TabsTrigger value="file">
+              <FileAudio className="size-4" />
+              <span>فایل</span>
+            </TabsTrigger>
+            <TabsTrigger value="mic">
+              <Mic className="size-4" />
+              <span>میکروفون</span>
+            </TabsTrigger>
+            <TabsTrigger value="tab">
+              <MonitorPlay className="size-4" />
+              <span>تب مرورگر</span>
+            </TabsTrigger>
+          </TabsList>
+          <TabsContent value="file" className="mt-3">
+            <Dropzone onFilePicked={handleFile} disabled={uploading} />
+          </TabsContent>
+          <TabsContent value="mic" className="mt-3">
+            <div className="rounded-lg border border-border bg-card/40 p-4">
+              <Recorder
+                inline
+                title={title.trim() || undefined}
+                numSpeakers={numSpeakers}
+                meetingBrief={meetingBrief.trim() || undefined}
+                seriesId={seriesId}
+                tagIds={tagIds}
+                onUploaded={(id) => {
+                  clearFields();
+                  queryClient.invalidateQueries({ queryKey: ["meetings"] });
+                  router.push(`/meetings/${id}`);
+                }}
+              />
+            </div>
+          </TabsContent>
+          <TabsContent value="tab" className="mt-3">
+            <div className="rounded-lg border border-border bg-card/40 p-4">
+              <TabRecorder
+                inline
+                title={title.trim() || undefined}
+                numSpeakers={numSpeakers}
+                meetingBrief={meetingBrief.trim() || undefined}
+                seriesId={seriesId}
+                tagIds={tagIds}
+                onUploaded={(id) => {
+                  clearFields();
+                  queryClient.invalidateQueries({ queryKey: ["meetings"] });
+                  router.push(`/meetings/${id}`);
+                }}
+              />
+            </div>
+          </TabsContent>
+        </Tabs>
       </CardContent>
     </Card>
   );

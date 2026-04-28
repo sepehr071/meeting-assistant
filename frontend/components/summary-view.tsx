@@ -1,9 +1,11 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { FileText, AlertTriangle } from "lucide-react";
 
 import { Card, CardContent, CardFooter } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { EmptyState } from "@/components/empty-state";
 import { getSummary, type SummaryRead } from "@/lib/api";
 import { formatJalali } from "@/lib/rtl";
 
@@ -25,10 +27,11 @@ export function SummaryView({ meetingId }: SummaryViewProps) {
   if (isLoading) {
     return (
       <Card>
-        <CardContent className="space-y-2 py-4">
+        <CardContent className="space-y-2 py-5">
           <Skeleton className="h-4 w-3/4" />
           <Skeleton className="h-4 w-full" />
           <Skeleton className="h-4 w-5/6" />
+          <Skeleton className="h-4 w-2/3" />
         </CardContent>
       </Card>
     );
@@ -37,19 +40,19 @@ export function SummaryView({ meetingId }: SummaryViewProps) {
   if (isError) {
     if (isNotFound(error)) {
       return (
-        <Card>
-          <CardContent className="py-6 text-center text-sm text-muted-foreground">
-            خلاصه هنوز آماده نیست
-          </CardContent>
-        </Card>
+        <EmptyState
+          icon={FileText}
+          title="خلاصه هنوز آماده نیست"
+          hint="پس از پایان رونویسی و خلاصه‌سازی، نتیجه اینجا نمایش داده می‌شود."
+        />
       );
     }
     return (
-      <Card>
-        <CardContent className="py-6 text-center text-sm text-destructive">
-          خطا در بارگذاری خلاصه
-        </CardContent>
-      </Card>
+      <EmptyState
+        icon={AlertTriangle}
+        title="خطا در بارگذاری خلاصه"
+        tone="destructive"
+      />
     );
   }
 
@@ -60,7 +63,7 @@ export function SummaryView({ meetingId }: SummaryViewProps) {
       <CardContent>
         <div
           dir="rtl"
-          className="prose prose-sm dark:prose-invert max-w-none whitespace-pre-wrap text-sm leading-7"
+          className="text-sm leading-8 whitespace-pre-wrap text-foreground/90"
         >
           {data.exec_summary?.trim() || "خلاصه‌ای ثبت نشد"}
         </div>
