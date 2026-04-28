@@ -1,0 +1,352 @@
+# Meeting Assistant — Project Guide
+
+Persian (Farsi) AI meeting assistant. FastAPI backend + Next.js frontend. Three ingest modes: (1) upload an existing recording, (2) live-record from mic in browser, (3) live-record another tab's audio via `getDisplayMedia` (works for Google Meet / Zoom Web / Teams Web — no extension required). All live modes run simultaneous (a) realtime captions via Scribe v2 Realtime WebSocket and (b) batch diarization via Scribe v2 on stop. Summarized into 7 artifacts (exec summary, action items, decisions, speaker-attributed minutes, Q&A, open questions, follow-up email draft) by Google Gemini 3 Flash Preview through OpenRouter. Recurring meetings group into series (with shared glossary + speaker-name memory + email-tone preference); free-form tags add cross-cutting organization. Optional Chrome MV3 extension provides one-click tab capture without the picker dialog.
+
+Single user. Local SQLite. No auth. Hardcoded model id via `.env`.
+
+## Stack
+
+- **Backend:** Python 3.12, `uv`, FastAPI, SQLAlchemy 2.0 async, `aiosqlite`, Alembic, `httpx`, ElevenLabs SDK, `rapidfuzz`, pydantic-settings.
+- **Frontend:** Next.js 16 (App Router, Turbopack), TypeScript, Tailwind 4, shadcn/ui, TanStack Query v5, react-dropzone, Vazirmatn font, sonner toasts.
+- **External:** ElevenLabs Scribe v2 (batch + realtime), OpenRouter (`google/gemini-3-flash-preview` with `response_format: json_schema strict`).
+
+## Layout
+
+```
+backend/
+├── app/
+│   ├── main.py             # FastAPI + CORS + lifespan; mounts routers
+│   ├── config.py           # pydantic-settings, reads .env
+│   ├── db.py               # async engine + SessionLocal
+│   ├── models.py           # Meeting, Transcript, Summary, Speaker, Series, Tag, MeetingTag, SeriesKeyterm, SeriesSpeakerName
+│   ├── schemas.py          # Pydantic IO (MeetingRead, SummaryRead, SeriesRead, TagRead, KeyTermRead, …)
+│   ├── routers/
+│   │   ├── meetings.py     # /api/meetings/* (upload, list w/ filters, detail, PATCH, suggest-series, transcript, summary, speakers, regenerate, SSE stream)
+│   │   ├── realtime.py     # /api/realtime/token (ephemeral token + per-series keyterms)
+│   │   ├── series.py       # /api/series/* + /keyterms (manual/suggested/accepted) + /speaker-names
+│   │   └── tags.py         # /api/tags/*
+│   ├── services/
+│   │   ├── storage.py      # save_audio, ffprobe duration
+│   │   ├── transcription.py# Scribe v2 batch wrapper (sync + async-thread); accepts keyterms
+│   │   ├── realtime_token.py # ElevenLabs single-use-token proxy
+│   │   ├── glossary.py     # series keyterm CRUD + speaker-name memory + correction-diff extraction (accepts session: AsyncSession)
+│   │   ├── series_match.py # rapidfuzz token_sort_ratio fuzzy series suggester (threshold 85)
+│   │   ├── summarizer.py   # OpenRouter call + JSON_SCHEMA + streaming + email_tone fragment
+│   │   └── pipeline.py     # state-machine orchestrator (loads series_id → keyterms + tone)
+│   └── prompts/summary_system.txt
+├── alembic/                # migrations
+├── storage/audio/          # uploaded blobs (UUID-named)
+├── tests/                  # pytest + pytest-asyncio (auto mode)
+└── pyproject.toml          # uv-managed; tool.pyright, tool.pytest
+
+frontend/
+├── app/
+│   ├── layout.tsx          # html dir="rtl", Vazirmatn, providers, sonner
+│   ├── providers.tsx       # QueryClientProvider
+│   ├── page.tsx            # list + filters (series, tags, q) + UploadSection
+│   ├── series/page.tsx     # series + glossary management
+│   ├── tags/page.tsx       # tag CRUD
+│   └── meetings/[id]/page.tsx  # 8-tab detail view
+├── components/
+│   ├── ui/                 # shadcn (button, card, tabs, …)
+│   ├── upload-section.tsx  # title, num_speakers, brief, series picker, fuzzy suggest, tag chips, dropzone, recorder
+│   ├── dropzone.tsx
+│   ├── recorder.tsx        # tee mic → MediaRecorder + AudioWorklet WS; accepts seriesId/tagIds
+│   ├── tab-recorder.tsx    # getDisplayMedia tab capture (+ optional mic mix) → same Scribe + upload pipeline
+│   ├── live-captions.tsx
+│   ├── meeting-status.tsx  # polled status badge
+│   ├── summary-view.tsx
+│   ├── action-items-view.tsx
+│   ├── decisions-view.tsx
+│   ├── qa-view.tsx                # Q&A list (with null-answer rendering)
+│   ├── open-questions-view.tsx    # parking-lot items
+│   ├── email-draft-view.tsx       # subject + body + tone label + copy button
+│   ├── minutes-view.tsx    # speaker rename popover; pulls known names from series
+│   ├── series-manager.tsx  # used by /series page
+│   ├── tag-manager.tsx     # used by /tags page
+│   └── transcript-view.tsx
+└── lib/
+    ├── api.ts              # typed fetch client (Series, Tag, KeyTerm, …)
+    ├── rtl.ts              # isPersian, formatJalali
+    ├── scribe-realtime.ts  # WebSocket client; appends keyterms (50×20chars) as URL params
+    └── pcm-worklet.ts      # AudioWorklet source string + base64 helper
+
+extension/
+├── src/
+│   ├── manifest.json       # MV3 manifest; tabCapture + offscreen + activeTab perms
+│   ├── service_worker.ts   # orchestrates tabCapture stream-id handoff to offscreen
+│   ├── offscreen.html
+│   ├── offscreen.ts        # capture core: tab+mic mix → AudioWorklet PCM → Scribe Realtime WS; on stop posts WebM to /api/meetings/upload (mirrors recorder.tsx)
+│   ├── popup.html
+│   ├── popup.ts            # form (title/series/tags/brief) + recording UI; pure TS, no framework
+│   ├── popup.css
+│   ├── lib/
+│   │   ├── scribe-realtime.ts  # COPY of frontend/lib/scribe-realtime.ts (verbatim)
+│   │   ├── pcm-worklet.ts      # COPY of frontend/lib/pcm-worklet.ts (verbatim)
+│   │   ├── api.ts              # subset port of frontend/lib/api.ts (uploadMeeting, listSeries, listTags, suggestSeries, getRealtimeToken)
+│   │   ├── messaging.ts        # popup ↔ SW ↔ offscreen message types (StartPayload, StatusUpdate, CaptionUpdate, ...)
+│   │   └── storage.ts          # chrome.storage.local for backendUrl
+│   └── icons/                  # 16/48/128 PNG (placeholders ok)
+├── vite.config.ts          # @crxjs/vite-plugin
+├── tsconfig.json
+└── package.json            # pnpm; deps: @crxjs/vite-plugin, @types/chrome, vite, typescript
+```
+
+## Run
+
+```bash
+# 1. backend (port 8000)
+cd backend
+uv run alembic upgrade head     # apply migrations after pulling
+uv run uvicorn app.main:app --port 8000
+
+# 2. frontend (port 3000)
+cd frontend
+pnpm dev
+
+# 3. extension (load unpacked into Chrome)
+cd extension
+pnpm install
+pnpm dev          # vite + crxjs hot-reload, output to extension/dist
+# Then: chrome://extensions → Developer mode → Load unpacked → extension/dist
+# Backend URL defaults to http://localhost:8000; configurable in popup.
+```
+
+`.env` (in `backend/`):
+
+```
+ELEVENLABS_API_KEY=...   # needs scribe_v2 + scribe_v2_realtime + single-use-token
+OPENROUTER_API_KEY=...
+OPENROUTER_MODEL=google/gemini-3-flash-preview
+OPENROUTER_REFERER=http://localhost:3000
+OPENROUTER_TITLE=Meeting Assistant
+STORAGE_DIR=./storage
+DATABASE_URL=sqlite+aiosqlite:///./meeting.db
+ALLOWED_ORIGIN=http://localhost:3000
+# ALLOWED_ORIGIN_REGEX=^(http://localhost:3000|chrome-extension://[a-p]+)$  # only set to override the default; default already allows the web app + Chrome extension
+```
+
+## Tests
+
+```bash
+cd backend
+uv run pytest -v
+```
+
+Currently 40 passed + 1 skipped (live Scribe smoke needs `tests/fixtures/sample_fa.mp3` + real `ELEVENLABS_API_KEY`).
+
+```bash
+cd frontend
+pnpm exec tsc --noEmit
+```
+
+No frontend unit tests. UI verified manually.
+
+## Architecture rules
+
+### State machine
+
+`Meeting.status`: `uploaded → transcribing → summarizing → done` (or `failed` with traceback in `error_message`).
+
+Pipeline runs as `BackgroundTasks` from upload endpoint. Idempotent — re-running on a `done` meeting is a no-op.
+
+### Hybrid live mode
+
+Browser tees one mic stream:
+1. `MediaRecorder` → WebM/Opus blob held in memory.
+2. `AudioWorklet` downsamples 48k float32 → 16k int16 PCM → base64 → WebSocket to `scribe_v2_realtime` for live captions.
+
+On stop: WS closes, blob uploads to `/api/meetings/upload` for batch `scribe_v2` with `diarize=True`. Live captions are display-only and discarded.
+
+**`scribe_v2_realtime` has NO diarization** — that's why we run batch on stop. Confirmed with ElevenLabs docs.
+
+### Realtime config goes via URL query params, not as a client message
+
+Client→server messages on `scribe_v2_realtime` WS are limited to `input_audio_chunk`. Sending `session_config` returns `input_error: "Unexpected message type: session_config"`. All config (`model_id`, `language_code`, `commit_strategy`, `vad_silence_threshold_secs`, `include_timestamps`) is set as URL query params on connect. See `lib/scribe-realtime.ts`.
+
+### Ephemeral token flow
+
+API key never reaches the browser. Frontend calls `POST /api/realtime/token` → backend proxies to `https://api.elevenlabs.io/v1/single-use-token/realtime_scribe` with `xi-api-key` → returns `{token, expires_at}` (~15 min, single use). Browser passes `?token=` on the WebSocket URL.
+
+### Structured outputs
+
+OpenRouter call uses `response_format: { type: "json_schema", json_schema: { name, strict: true, schema } }`. The schema is in `app/services/summarizer.py::JSON_SCHEMA` (do not duplicate elsewhere). `summarize()` validates returned JSON via `jsonschema.validate` before returning — `ValueError` on mismatch.
+
+### Summarizer context injection
+
+`summarize(prompt, *, context=None, email_tone='formal')` and `summarize_stream(...)`. Tone fragment (`Email tone: FORMAL.` or `Email tone: CASUAL.`) is always injected as the second system message; `context` (if set) becomes a third system message. Diarized transcript stays clean in the user message. Pipeline pulls `email_tone` from `Meeting.series.email_tone` (formal default if no series).
+
+### Series, tags, glossary
+
+Recurring meetings → bind to `Series` (single FK on `Meeting`, optional). Series carries `email_tone` + glossary (`SeriesKeyterm` rows: `manual`/`suggested`/`accepted`) + speaker-name memory (`SeriesSpeakerName`, suggest-only — no voice embeddings in Scribe v2). Standalone meetings have no glossary fed to Scribe.
+
+Glossary feeds Scribe `keyterms` for both batch (1000 × 50chars cap) and realtime (50 × 20chars cap as URL params; +20% billing surcharge). Caps and validation in `app/services/glossary.py::_is_valid_keyterm`.
+
+Speaker rename in `meetings.py::rename_speaker` auto-pushes display_name into `series_speaker_names` AND adds it as a suggested keyterm — user accepts/rejects in `/series` UI.
+
+Tags are flat M:N labels (`Tag` + `MeetingTag`). Independent of series. Used for cross-cutting filters on the home page.
+
+### Tab capture from web app (`getDisplayMedia`)
+
+`frontend/components/tab-recorder.tsx` calls `navigator.mediaDevices.getDisplayMedia({ audio: true, video: true })` → user picks a tab in the browser's system dialog → user MUST tick "Share tab audio" (browser-level checkbox; if missed, no audio track and we surface error). Video tracks are stopped immediately; only the audio track feeds the same `AudioContext` mixer used by `recorder.tsx`. Optional mic mix (default on) goes through `getUserMedia` and joins via a `MediaStreamDestination`. Auto-stops on the audio track's `ended` event when the user clicks the browser's "Stop sharing" bar.
+
+Cross-browser: Chrome / Edge solid; Firefox tab-audio support partial. No browser extension needed for this path. Tradeoff vs the Chrome extension: extra picker click each time, but works in any Chromium browser including Edge with zero install.
+
+### Tunable Scribe params (per meeting)
+
+Stored on `Meeting` row, set via upload form:
+
+- `num_speakers: int | None` — caps Scribe diarization clusters (1-32). Blank = model auto-detect.
+- `meeting_brief: str | None` — free-text context. Fed to LLM only, not Scribe.
+
+Always-on at the Scribe call: `no_verbatim=True`, `tag_audio_events=False`, `language_code="fas"`, `diarize=True`, `timestamps_granularity="word"`, `model_id="scribe_v2"`. See `app/services/transcription.py`.
+
+## Online meetings via Chrome extension
+
+`extension/` (MV3) captures the **active tab's audio** (everyone in a Google Meet / Zoom Web / Teams Web call) plus the user's mic, mixes them via Web Audio, and reuses the existing realtime + batch pipeline. The web app's `tab-recorder.tsx` does the same thing via `getDisplayMedia` with a picker dialog; the extension is the no-picker / one-click variant for users willing to install it.
+
+### Architecture
+
+```
+popup (form + start/stop)
+   ↓ chrome.runtime.sendMessage
+service_worker.ts
+   ├─ chrome.tabCapture.getMediaStreamId()  → stream ID
+   └─ chrome.offscreen.createDocument()
+          ↓
+offscreen.ts (long-lived DOM context)
+   ├─ getUserMedia({ chromeMediaSource:"tab", chromeMediaSourceId })   ← tab audio
+   ├─ getUserMedia({ audio:{...} })                                     ← mic (optional)
+   ├─ AudioContext mix → MediaStreamDestination
+   │       ├→ AudioWorklet (PCM_WORKLET_SRC) → ScribeRealtimeClient (live captions)
+   │       └→ MediaRecorder (WebM blob)
+   ├─ tabSrc.connect(ctx.destination)   // CRITICAL: keeps tab audio audible to user
+   └─ on STOP: blob → POST /api/meetings/upload → existing pipeline
+```
+
+The service worker only orchestrates (it cannot hold long-lived connections — MV3 idles in 30s). All Web Audio + WebSocket lives in the offscreen document, which stays alive as long as it's open.
+
+### Why offscreen, not a content script
+
+Content scripts run inside the meeting page and can be blocked / modified by the host page. The offscreen document is a private extension page with full DOM + Web Audio + WebSocket; not visible to Meet/Zoom.
+
+### Why not the Meet Media API or a meeting bot
+
+- Meet Media API (Apr 2026): Developer Preview, requires libwebrtc C++ client and a 4–7 week paid security review. Not worth for single-user.
+- Meeting bot (Recall.ai-style): cloud server per call, ToS grey area. Overkill.
+- Result: Chrome extension is the simplest path that works on any Chrome-tab meeting.
+
+### Critical gotcha — tab silence
+
+If `tabSource.connect(audioContext.destination)` is omitted, the tab goes silent during recording. Always wire the monitor path. Comment marks it CRITICAL in `offscreen.ts`. Note: `tab-recorder.tsx` (web app) does NOT have this problem — `getDisplayMedia` keeps tab audio audible automatically.
+
+### Critical gotcha — user-gesture window in extension popup
+
+`chrome.tabCapture.getMediaStreamId` must be called **synchronously** within the popup click handler, before any `await`. Chromium (Chrome + Edge) only honors the user-gesture token for ~1 second; any awaited promise resolution before the call exhausts it and Chrome rejects with `Permission dismissed`. We pre-cache the active tab ID at popup mount, then call `getMediaStreamId` as the first sync action on click — async work (sendMessage etc.) goes in its callback. See `extension/src/popup.ts::handleStart`.
+
+### Reused code
+
+`extension/src/lib/scribe-realtime.ts` and `extension/src/lib/pcm-worklet.ts` are byte-identical copies of `frontend/lib/`. Keep them in sync — when the realtime API or PCM format changes, update both.
+
+## Gotchas
+
+### Pipeline holds bound `SessionLocal`
+
+`app/services/pipeline.py` does `from app.db import SessionLocal` at module load → captures its own reference. Tests must `monkeypatch.setattr(app.services.pipeline, "SessionLocal", new)` in addition to `app.db.SessionLocal`. See `tests/conftest.py` for the pattern. New service modules MUST accept `session: AsyncSession` as a parameter (see `glossary.py`, `series_match.py`) — never capture `SessionLocal` at top level.
+
+### SQLAlchemy async + M:N reassignment
+
+Don't `meeting.tags = [...]` on async session — triggers `MissingGreenlet` via lazy load on the existing collection. Use direct `MeetingTag` row delete + insert (see `_set_meeting_tags` in `routers/meetings.py`). Same applies to any future M:N relationship.
+
+### Alembic batch FK names for SQLite
+
+Autogen produces `create_foreign_key(None, ...)` and `drop_constraint(None, ...)` inside `batch_alter_table`. SQLite downgrade fails on `None`. Always name the FK explicitly (e.g. `'fk_meetings_series_id'`) in both upgrade and downgrade. See `alembic/versions/98bfcb3b85de_*.py`.
+
+### SQLAlchemy 2.0 `Mapped` + future annotations
+
+Modules use `from __future__ import annotations`. Don't quote forward refs inside `Mapped[...]` (write `Mapped[Series | None]`, not `Mapped["Series | None"]`). Pyright misresolves quoted refs even when the class is defined later in the same module.
+
+### FastAPI list query params need explicit `Query`
+
+`tag_ids: list[str] | None = None` won't parse repeated `?tag_ids=...&tag_ids=...` — single value comes through as a string and the `in_()` filter silently misbehaves. Use `tag_ids: list[str] | None = Query(None)`.
+
+### httpx async multipart with list fields
+
+In tests, prefer `data={"tag_ids": [t1, t2]}` (dict with list value) over `data=[("tag_ids", t1), ("tag_ids", t2)]` (list of tuples). The list-of-tuples form trips `Attempted to send a sync request with an AsyncClient instance` on multipart uploads.
+
+### Next.js 16 quirks
+
+This is Next 16, not 14/15. Read `frontend/AGENTS.md` and `node_modules/next/dist/docs/01-app/02-guides/upgrading/version-16.md` before touching App Router APIs. Turbopack is default. `middleware` → `proxy`. Server Components are the default; opt into client with `"use client"`.
+
+### Pyright editor warnings
+
+Pyright in VS Code may flag `app.*` imports as unresolved despite `[tool.pyright] extraPaths = ["."]` in `pyproject.toml`. False positive — pytest and uvicorn resolve them fine via the `[tool.pytest.ini_options] pythonpath = ["."]` setting. Ignore those specific reportMissingImports warnings; do NOT add `# type: ignore` everywhere.
+
+Pyright also flags `client.speech_to_text.convert(...)` as unknown attribute on `ElevenLabs`. SDK type stubs are incomplete; runtime works.
+
+### WebM duration
+
+`MediaRecorder` produces WebM blobs that often lack a duration header. `ffprobe` returns `N/A` → `storage.probe_duration_seconds()` returns `None` → `meetings.duration_s` stays null. UI handles `null` gracefully ("—"). Don't try to fix at the recorder side.
+
+### CORS
+
+`backend/app/main.py` builds `allow_origin_regex` from `settings.ALLOWED_ORIGIN` (web app) plus `chrome-extension://[a-p]+` (extension; same scheme on Chrome AND Edge — Edge does NOT use `edge-extension://`). Override with `ALLOWED_ORIGIN_REGEX` env var if needed. `allow_credentials=False` because the extension does not send cookies — flip back to `True` only if you add cookie auth.
+
+### Audio retention
+
+Files kept indefinitely under `backend/storage/audio/{uuid}.{ext}`. No cleanup job. Disk grows. Regenerate-summary uses original audio implicitly (via cached transcript), so deleting audio is safe after `done` only if you don't plan to re-transcribe with different params.
+
+## Conventions
+
+- **Python:** `snake_case`, type hints on all signatures, `from __future__ import annotations` at top of files using forward refs. SQLAlchemy 2.0 declarative + async sessions.
+- **TypeScript:** `camelCase`, strict types from `lib/api.ts`. Components functional + hooks. shadcn primitives only — do not hand-roll buttons/cards.
+- **RTL:** `<html dir="rtl">` global. Persian text uses Vazirmatn (`--font-sans` CSS var). Use `dirOf(text)` from `lib/rtl.ts` for mixed-content containers. Persian dates via `Intl.DateTimeFormat('fa-IR-u-ca-persian')` (helper: `formatJalali`).
+- **Errors:** raise `HTTPException` from routers; `RuntimeError` from services with prefixed message (`"Scribe failed: ..."`). Pipeline writes traceback into `Meeting.error_message` on failure — never swallow exceptions silently.
+- **No trailing summaries** in dev chat. Code-first.
+- **Extension:** plain TypeScript (no React in popup). DOM API + a tiny render() function. CSS hand-rolled in `popup.css`. Persian RTL via `<html lang="fa" dir="rtl">`.
+
+## Adding a new field to Meeting
+
+1. `app/models.py` — add `Mapped[T | None] = mapped_column(...)`.
+2. `app/schemas.py` — add to `MeetingRead` (and `MeetingCreate` if user-settable).
+3. `uv run alembic revision --autogenerate -m "add X"` → review the generated file. Name any new FK constraints explicitly so SQLite downgrade works.
+4. `uv run alembic upgrade head` — verify reversible by running `alembic downgrade -1 && alembic upgrade head`.
+5. `app/routers/meetings.py::upload_meeting` — accept as `Form(None)` if user-settable; persist on `Meeting`. Update `_meeting_detail` helper. For M:N relations use a direct `delete + insert` helper, NOT `meeting.rel = [...]`.
+6. Pipeline path — read from row in `_load_meeting_context` (returns `_MeetingCtx`), pass to downstream service.
+7. `frontend/lib/api.ts` — add to `Meeting` / `MeetingDetail` interface and `UploadMeetingOptions`.
+8. `frontend/components/upload-section.tsx` — add input, plumb to `uploadMeeting`. If recording-relevant, extend `<Recorder/>` AND `<TabRecorder/>` props too.
+
+## What lives where (quick lookup)
+
+| Question | File |
+|---|---|
+| Where's the JSON schema sent to OpenRouter? | `backend/app/services/summarizer.py::JSON_SCHEMA` |
+| What system prompt does the LLM see? | `backend/app/prompts/summary_system.txt` |
+| How is the WebSocket URL built? | `frontend/lib/scribe-realtime.ts::connect` |
+| Where is the AudioWorklet source? | `frontend/lib/pcm-worklet.ts::PCM_WORKLET_SRC` (string registered via blob URL) |
+| Where do speakers get seeded? | `backend/app/services/pipeline.py::_persist_transcript` |
+| Where is the diarized prompt built? | `backend/app/services/pipeline.py::build_diarized_prompt` (>1.2s gap or speaker change → new segment) |
+| Where is the SSE summary endpoint? | `backend/app/routers/meetings.py::stream_summary` |
+| Where are status labels translated? | `frontend/components/meeting-status.tsx` |
+| Where is the keyterm validator? | `backend/app/services/glossary.py::_is_valid_keyterm` (50/20-char caps depending on `realtime` flag) |
+| Where does the series fuzzy-match run? | `backend/app/services/series_match.py::suggest_series` (rapidfuzz `token_sort_ratio`, threshold 85) |
+| Where are realtime keyterms passed? | `frontend/lib/scribe-realtime.ts::connect` (URL params, capped 50 × 20chars) |
+| Where does pipeline read series-derived params? | `backend/app/services/pipeline.py::_load_meeting_context` (returns `_MeetingCtx` with `keyterms` + `email_tone`) |
+| How are M:N tags assigned? | `backend/app/routers/meetings.py::_set_meeting_tags` (delete + insert into `meeting_tags`) |
+| Where is the tab audio captured (web app, picker)? | `frontend/components/tab-recorder.tsx::handleStart` |
+| Where is the tab audio captured (extension, no picker)? | `extension/src/offscreen.ts::start` |
+| How does the popup talk to the offscreen doc? | via `service_worker.ts` relay; types in `extension/src/lib/messaging.ts` |
+| How is the WebM blob uploaded from the extension? | `extension/src/offscreen.ts::stop` → `extension/src/lib/api.ts::uploadMeeting` → existing `/api/meetings/upload` |
+| Where to change the backend URL? | popup → "آدرس بک‌اند" field; persisted in `chrome.storage.local` via `extension/src/lib/storage.ts` |
+
+## What this project intentionally does NOT do
+
+- Multi-user / auth.
+- Multi-tenant DB.
+- Real-time live diarization (impossible with current ElevenLabs realtime model).
+- Audio chunked progressive upload (single blob on stop, capped at 500MB).
+- Cross-language meetings (Persian only; flip `language_code` if you need another single language).
+- Background workers (Redis/Celery). Pipeline runs in FastAPI `BackgroundTasks`, fine for single-user load.
+- Persisted live captions. They're display-only, discarded on stop. The diarized batch transcript is the authoritative record.
+- Cross-browser extension (Firefox / Safari MV3 differs — Chrome only for now).
+- In-meeting "recording" indicator overlay (could be a future content script for consent UX).

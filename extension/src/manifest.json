@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "Meeting Assistant Capture",
+  "version": "0.1.0",
+  "description": "Capture online meeting audio (tab + mic) for transcription via the Meeting Assistant backend.",
+  "permissions": ["tabCapture", "offscreen", "activeTab", "storage", "tabs"],
+  "host_permissions": [
+    "http://localhost:8000/*",
+    "http://127.0.0.1:8000/*",
+    "https://api.elevenlabs.io/*"
+  ],
+  "background": {
+    "service_worker": "src/service_worker.ts",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "src/popup.html",
+    "default_title": "Meeting Assistant Capture"
+  },
+  "icons": {
+    "16": "src/icons/16.png",
+    "48": "src/icons/48.png",
+    "128": "src/icons/128.png"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["src/offscreen.html"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}
