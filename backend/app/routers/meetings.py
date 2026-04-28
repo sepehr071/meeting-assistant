@@ -451,6 +451,12 @@ async def regenerate(
     if transcript is None:
         raise HTTPException(status_code=400, detail="cannot regenerate without a transcript")
 
+    # Flip status synchronously so the client sees the in-flight state on the
+    # very next refetch (the background task takes a moment to start).
+    meeting.status = MeetingStatus.SUMMARIZING
+    meeting.error_message = None
+    await session.commit()
+
     background_tasks.add_task(pipeline.regenerate_summary, meeting_id)
     return {"queued": True, "meeting_id": meeting_id}
 

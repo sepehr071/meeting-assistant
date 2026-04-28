@@ -172,6 +172,8 @@ API key never reaches the browser. Frontend calls `POST /api/realtime/token` →
 
 OpenRouter call uses `response_format: { type: "json_schema", json_schema: { name, strict: true, schema } }`. The schema is in `app/services/summarizer.py::JSON_SCHEMA` (do not duplicate elsewhere). `summarize()` validates returned JSON via `jsonschema.validate` before returning — `ValueError` on mismatch.
 
+`_body()` pins `temperature=0.2`. Verbatim `minutes[].text` echo + `speaker_names` mapping rely on low-temperature output; the email body still reads naturally at this temp. Don't bump above ~0.3 without re-validating that `minutes[].text` matches the input transcript word-for-word.
+
 ### Summarizer context injection
 
 `summarize(prompt, *, context=None, email_tone='formal')` and `summarize_stream(...)`. Tone fragment (`Email tone: FORMAL.` or `Email tone: CASUAL.`) is always injected as the second system message; `context` (if set) becomes a third system message. Diarized transcript stays clean in the user message. Pipeline pulls `email_tone` from `Meeting.series.email_tone` (formal default if no series).
@@ -183,6 +185,10 @@ Recurring meetings → bind to `Series` (single FK on `Meeting`, optional). Seri
 Glossary feeds Scribe `keyterms` for both batch (1000 × 50chars cap) and realtime (50 × 20chars cap as URL params; +20% billing surcharge). Caps and validation in `app/services/glossary.py::_is_valid_keyterm`.
 
 Speaker rename in `meetings.py::rename_speaker` auto-pushes display_name into `series_speaker_names` AND adds it as a suggested keyterm — user accepts/rejects in `/series` UI.
+
+LLM speaker auto-assign runs in `services/speakers.py::apply_speaker_names`, called from the pipeline after `summarize()` (both `run_pipeline` and `regenerate_summary`). It reads the LLM's `speaker_names` array and writes `Speaker.display_name`, **skipping speakers that already have a non-empty `display_name`** (preserves manual edits) and syncing into the series glossary the same way `rename_speaker` does. Don't change the skip semantics — manual edits must always win over LLM re-runs.
+
+Speaker mapping signals are in `prompts/summary_system.txt::SPEAKER MAPPING`: (1) self-introduction inside the speaker's own line, (2) address-by-name in segment N + direct reply in N+1, (3) name from `meeting_brief` matched by role/content. Brief is preferred for spelling but **not required** — speakers without a brief still get mapped if (1) or (2) fires confidently. Don't re-gate this on brief presence.
 
 Tags are flat M:N labels (`Tag` + `MeetingTag`). Independent of series. Used for cross-cutting filters on the home page.
 
@@ -296,6 +302,18 @@ Pyright also flags `client.speech_to_text.convert(...)` as unknown attribute on 
 
 Files kept indefinitely under `backend/storage/audio/{uuid}.{ext}`. No cleanup job. Disk grows. Regenerate-summary uses original audio implicitly (via cached transcript), so deleting audio is safe after `done` only if you don't plan to re-transcribe with different params.
 
+### Detail page dependent-query cache must be invalidated on status flip
+
+`frontend/app/meetings/[id]/page.tsx` polls `["meeting", id]` only while status ∈ {uploaded, transcribing, summarizing}. The summary/transcript/action-items views all use `retry: false`, so their first 404 sticks in the cache. The page-level `useEffect` watching `status` invalidates `["meeting", id]` + `["transcript", id]` + `["summary", id]` when status flips to `done` or `failed`. Without this, the user sees "not ready" until a hard reload.
+
+### Status transition must be synchronous when an endpoint queues a BackgroundTask
+
+If a route enqueues `BackgroundTasks` work that the client should see as in-flight (e.g. `regenerate-summary`), flip `meeting.status` to the in-flight enum + `await session.commit()` *before* `background_tasks.add_task(...)`. Otherwise the client's invalidate-then-refetch lands before the background task even starts and sees the old terminal status, so polling never resumes. Mirror this on the frontend with `onMutate` setting query data optimistically. See `regenerate` endpoint in `routers/meetings.py` and `regenerateMut` in `app/meetings/[id]/page.tsx`.
+
+### Adding required fields to `summarizer.JSON_SCHEMA`
+
+Only `tests/test_summarizer_mock.py::VALID_BRIEF` runs through `jsonschema.validate` and must include every required field. The pipeline e2e tests (`test_pipeline_e2e.VALID_BRIEF`, `test_meetings_extensions::test_summary_exposes_new_fields`) patch `app.services.summarizer.summarize` directly with `return_value=...` — they bypass validation, so they don't need the new field unless your downstream code depends on its presence in the dict.
+
 ## Conventions
 
 - **Python:** `snake_case`, type hints on all signatures, `from __future__ import annotations` at top of files using forward refs. SQLAlchemy 2.0 declarative + async sessions.
@@ -325,6 +343,8 @@ Files kept indefinitely under `backend/storage/audio/{uuid}.{ext}`. No cleanup j
 | How is the WebSocket URL built? | `frontend/lib/scribe-realtime.ts::connect` |
 | Where is the AudioWorklet source? | `frontend/lib/pcm-worklet.ts::PCM_WORKLET_SRC` (string registered via blob URL) |
 | Where do speakers get seeded? | `backend/app/services/pipeline.py::_persist_transcript` |
+| Where is LLM speaker→name auto-assign applied? | `backend/app/services/speakers.py::apply_speaker_names` (skips speakers with non-empty `display_name`, syncs to series glossary like `rename_speaker`) |
+| Where does the pipeline call speaker auto-assign? | `backend/app/services/pipeline.py::_apply_speaker_names_from_summary` (after `summarize`, in both `run_pipeline` and `regenerate_summary`) |
 | Where is the diarized prompt built? | `backend/app/services/pipeline.py::build_diarized_prompt` (>1.2s gap or speaker change → new segment) |
 | Where is the SSE summary endpoint? | `backend/app/routers/meetings.py::stream_summary` |
 | Where are status labels translated? | `frontend/components/meeting-status.tsx` |

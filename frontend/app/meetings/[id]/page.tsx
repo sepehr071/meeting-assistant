@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -17,6 +18,7 @@ import { SummaryView } from "@/components/summary-view";
 import { TranscriptView } from "@/components/transcript-view";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Tabs,
@@ -28,6 +30,12 @@ import { getMeeting, regenerate, type MeetingDetail } from "@/lib/api";
 import { dirOf, formatJalali } from "@/lib/rtl";
 
 const IN_FLIGHT = new Set(["uploaded", "transcribing", "summarizing"]);
+
+const PROCESSING_LABELS: Record<string, string> = {
+  uploaded: "در صف پردازش…",
+  transcribing: "درحال رونویسی صدا…",
+  summarizing: "درحال خلاصه‌سازی…",
+};
 
 function formatDuration(seconds: number | null): string | null {
   if (seconds == null) return null;
@@ -55,7 +63,15 @@ export default function MeetingDetailPage() {
 
   const regenerateMut = useMutation({
     mutationFn: () => regenerate(id),
+    onMutate: () => {
+      // Optimistic flip so the processing banner shows immediately and
+      // refetchInterval picks up again without waiting for the round-trip.
+      queryClient.setQueryData<MeetingDetail>(["meeting", id], (old) =>
+        old ? { ...old, status: "summarizing" } : old,
+      );
+    },
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["meeting", id] });
       queryClient.invalidateQueries({ queryKey: ["summary", id] });
       toast.success("بازتولید خلاصه آغاز شد");
     },
@@ -69,6 +85,16 @@ export default function MeetingDetailPage() {
   const title = meeting?.title?.trim() || meeting?.original_filename || "";
   const duration = formatDuration(meeting?.duration_s ?? null);
   const status = meeting?.status;
+
+  // Once processing completes, force-refetch the dependent queries that may
+  // have cached a 404 while the pipeline was still running.
+  useEffect(() => {
+    if (status === "done" || status === "failed") {
+      queryClient.invalidateQueries({ queryKey: ["meeting", id] });
+      queryClient.invalidateQueries({ queryKey: ["transcript", id] });
+      queryClient.invalidateQueries({ queryKey: ["summary", id] });
+    }
+  }, [status, id, queryClient]);
 
   return (
     <main className="container mx-auto max-w-5xl space-y-6 p-6">
@@ -121,6 +147,18 @@ export default function MeetingDetailPage() {
           <span>بازتولید خلاصه</span>
         </Button>
       </div>
+
+      {status && IN_FLIGHT.has(status) && (
+        <div
+          className="flex items-center gap-3 rounded-md border bg-muted/40 px-3 py-2 text-sm text-muted-foreground"
+          dir="rtl"
+          aria-live="polite"
+        >
+          <RefreshCw className="size-4 animate-spin text-primary" />
+          <span className="flex-1">{PROCESSING_LABELS[status] ?? "درحال پردازش…"}</span>
+          <Progress value={null} className="w-32 shrink-0" />
+        </div>
+      )}
 
       {status === "failed" ? (
         <Card>

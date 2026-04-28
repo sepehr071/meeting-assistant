@@ -8,7 +8,7 @@ from sqlalchemy import select
 from app.db import SessionLocal
 from app.config import settings
 from app.models import EmailTone, Meeting, MeetingStatus, Series, Speaker, Summary, Transcript
-from app.services import glossary, summarizer
+from app.services import glossary, speakers, summarizer
 from app.services.summarizer import EMAIL_TONE_CASUAL, EMAIL_TONE_FORMAL
 from app.services.transcription import TranscriptionResult, transcribe_async
 
@@ -163,6 +163,18 @@ async def _persist_transcript(meeting_id: str, result: TranscriptionResult) -> N
         await session.commit()
 
 
+async def _apply_speaker_names_from_summary(
+    meeting_id: str, mapping: list[dict] | None
+) -> None:
+    if not mapping:
+        return
+    async with SessionLocal() as session:
+        meeting = await session.get(Meeting, meeting_id)
+        if meeting is None:
+            return
+        await speakers.apply_speaker_names(session, meeting, mapping)
+
+
 async def _load_transcript_words(meeting_id: str) -> list[dict] | None:
     async with SessionLocal() as session:
         transcript = await session.get(Transcript, meeting_id)
@@ -278,6 +290,7 @@ async def run_pipeline(meeting_id: str) -> None:
         data = await summarizer.summarize(
             prompt, context=ctx.meeting_brief, email_tone=ctx.email_tone
         )
+        await _apply_speaker_names_from_summary(meeting_id, data.get("speaker_names"))
         await _persist_summary(meeting_id, data, email_tone=ctx.email_tone)
     except Exception:
         await _set_status(
@@ -303,6 +316,7 @@ async def regenerate_summary(meeting_id: str) -> str:
         data = await summarizer.summarize(
             prompt, context=ctx.meeting_brief, email_tone=ctx.email_tone
         )
+        await _apply_speaker_names_from_summary(meeting_id, data.get("speaker_names"))
         return await _persist_summary(meeting_id, data, email_tone=ctx.email_tone)
     except Exception:
         await _set_status(

@@ -10,6 +10,31 @@ The user message contains the diarized transcript. Each segment is on its own li
 
 A second system message MAY provide meeting context (attendee names, project info). Use it to map `speaker_id` -> human name when introductions or address-by-name appear, and to disambiguate jargon, product names, and acronyms. If there is no context message, do not invent one.
 
+SPEAKER MAPPING
+Always attempt to map `speaker_id`s to real names, regardless of whether a meeting context message is provided. Use any of the following confident signals from the transcript itself:
+
+1. **Self-introduction** — the speaker states their own name in their own segment. Examples:
+   - `[speaker_2 ...] سلام، من سپهرم.`        → speaker_2 = "سپهر"
+   - `[speaker_0 ...] من علی هستم، بک‌اند تیم.` → speaker_0 = "علی"
+   - `[speaker_1 ...] اسمم مریمه.`            → speaker_1 = "مریم"
+   The name must be inside that speaker's own line — being mentioned BY ANOTHER speaker does not count as self-introduction.
+
+2. **Address-by-name + reply** — when speaker A addresses speaker B by name and speaker B answers in the next segment. Example:
+   - `[speaker_0 ...] علی، نظرت چیه؟`
+   - `[speaker_1 ...] به نظر من باید عقب بندازیم.`
+   → speaker_1 = "علی" (high confidence only when the reply is an immediate, direct answer).
+
+3. **Meeting context** — if the second system message names attendees, prefer those exact spellings when populating `display_name`, even if the transcript renders the name slightly differently. Match attendee role + transcript content (e.g. context says "علی پی‌ام"; the speaker who talks about timelines and priorities is likely علی).
+
+Populate `speaker_names` with one `{speaker_id, display_name}` entry per confidently-mapped speaker.
+
+Strict rules:
+- Use the name exactly as written in meeting context when available; otherwise copy the name as spoken in the transcript (preserve script).
+- Omit any speaker you cannot map with high confidence. Do NOT guess from voice traits, content topic alone, or weak cues.
+- If no signal is confident, return `speaker_names: []`.
+- Never include a `speaker_id` that did not appear in the transcript.
+- One `display_name` per `speaker_id`. If two speakers share a name in context (rare), keep both entries.
+
 OUTPUT
 Return a single JSON object matching the response_format schema. No markdown, no commentary. Empty arrays are correct when nothing applies.
 

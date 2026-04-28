@@ -70,20 +70,22 @@ export function ActionItemsView({ meetingId }: ActionItemsViewProps) {
         <Card key={idx} size="sm">
           <CardContent className="space-y-2">
             <p className="text-sm font-semibold leading-6">{item.text}</p>
-            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-              <span className="inline-flex items-center gap-1">
-                <User className="size-3.5" />
-                {item.owner ? (
-                  <Badge variant="secondary">{item.owner}</Badge>
-                ) : (
-                  <span>—</span>
+            {(item.owner || item.due_date) && (
+              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                {item.owner && (
+                  <span className="inline-flex items-center gap-1">
+                    <User className="size-3.5" />
+                    <Badge variant="secondary">{item.owner}</Badge>
+                  </span>
                 )}
-              </span>
-              <span className="inline-flex items-center gap-1">
-                <CalendarDays className="size-3.5" />
-                <span>{item.due_date ? formatJalali(item.due_date) : "—"}</span>
-              </span>
-            </div>
+                {item.due_date && (
+                  <span className="inline-flex items-center gap-1">
+                    <CalendarDays className="size-3.5" />
+                    <span>{formatJalali(item.due_date)}</span>
+                  </span>
+                )}
+              </div>
+            )}
           </CardContent>
         </Card>
       ))}

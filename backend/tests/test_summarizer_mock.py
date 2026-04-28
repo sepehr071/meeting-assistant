@@ -31,6 +31,9 @@ VALID_BRIEF = {
         "subject": "خلاصه جلسه بودجه",
         "body": "سلام،\n\nخلاصه جلسه ضمیمه است.\n\nبا تشکر",
     },
+    "speaker_names": [
+        {"speaker_id": "S1", "display_name": "علی"},
+    ],
 }
 
 

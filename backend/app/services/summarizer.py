@@ -22,6 +22,7 @@ JSON_SCHEMA: dict = {
         "qa",
         "open_questions",
         "email_draft",
+        "speaker_names",
     ],
     "properties": {
         "exec_summary": {"type": "string"},
@@ -84,6 +85,18 @@ JSON_SCHEMA: dict = {
             "properties": {
                 "subject": {"type": "string"},
                 "body": {"type": "string"},
+            },
+        },
+        "speaker_names": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["speaker_id", "display_name"],
+                "properties": {
+                    "speaker_id": {"type": "string"},
+                    "display_name": {"type": "string"},
+                },
             },
         },
     },
@@ -161,6 +174,9 @@ def _body(
                 "schema": JSON_SCHEMA,
             },
         },
+        # Low temperature for stable speaker mapping + verbatim minutes echo.
+        # Email body still reads naturally at this temp.
+        "temperature": 0.2,
         "stream": stream,
     }
 
