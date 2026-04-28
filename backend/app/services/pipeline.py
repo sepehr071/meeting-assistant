@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import traceback
 from pathlib import Path
 
@@ -14,6 +15,34 @@ from app.services.transcription import TranscriptionResult, transcribe_async
 
 
 _GAP_THRESHOLD_S = 1.2
+
+# Cancellation: in-memory map of asyncio.Event keyed by meeting_id. Set by the
+# cancel endpoint, polled at safe boundaries inside the pipeline.
+CANCELLED_SENTINEL = "cancelled by user"
+_cancel_events: dict[str, asyncio.Event] = {}
+
+
+class _CancelledByUser(Exception):
+    """Raised inside the pipeline at a safe boundary when the user requested cancel."""
+
+
+def _check_cancel(ev: asyncio.Event) -> None:
+    if ev.is_set():
+        raise _CancelledByUser
+
+
+async def request_cancel(meeting_id: str) -> bool:
+    """Signal an in-flight pipeline to abort at its next safe boundary.
+
+    Best-effort: ElevenLabs Scribe HTTP can't be torn down mid-call, so the
+    abort happens after the next checkpoint. The router flips status
+    immediately for instant UI feedback.
+    """
+    ev = _cancel_events.get(meeting_id)
+    if ev is None:
+        return False
+    ev.set()
+    return True
 
 
 def _word_text(word: dict) -> str:
@@ -47,10 +76,11 @@ def _word_end(word: dict) -> float | None:
         return None
 
 
-def build_diarized_prompt(words: list[dict]) -> str:
-    """Group consecutive same-speaker words into segments. Split on speaker change
-    or word.start - prev_end > 1.2s. Each segment becomes
-    `[speaker_id start-end] text`.
+def _segment_words(
+    words: list[dict],
+) -> list[tuple[str, float, float, str]]:
+    """Group consecutive same-speaker words into segments. Split on speaker
+    change or word.start - prev_end > 1.2s.
     """
     segments: list[tuple[str, float, float, str]] = []
 
@@ -103,11 +133,30 @@ def build_diarized_prompt(words: list[dict]) -> str:
                 cur_end = effective_end
 
     flush()
+    return segments
 
+
+def build_diarized_prompt(words: list[dict]) -> str:
+    """`[speaker_id start-end] text` lines for the LLM prompt."""
     return "\n".join(
         f"[{speaker} {start:.2f}-{end:.2f}] {text}"
-        for speaker, start, end, text in segments
+        for speaker, start, end, text in _segment_words(words)
     )
+
+
+def build_minutes_segments(words: list[dict]) -> list[dict]:
+    """Server-side minutes built directly from the diarized words. Bypasses the
+    LLM so 1h+ meetings don't get truncated by output-token limits.
+    """
+    return [
+        {
+            "speaker_id": speaker,
+            "text": text,
+            "start_s": start,
+            "end_s": end,
+        }
+        for speaker, start, end, text in _segment_words(words)
+    ]
 
 
 async def _set_status(meeting_id: str, status: MeetingStatus, *, error: str | None = None) -> None:
@@ -259,6 +308,8 @@ async def run_pipeline(meeting_id: str) -> None:
     """Drive a meeting through transcribing -> summarizing -> done.
     Idempotent: returns immediately if status is already DONE.
     """
+    cancel_ev = asyncio.Event()
+    _cancel_events[meeting_id] = cancel_ev
     try:
         async with SessionLocal() as session:
             meeting = await session.get(Meeting, meeting_id)
@@ -271,6 +322,7 @@ async def run_pipeline(meeting_id: str) -> None:
             meeting.error_message = None
             await session.commit()
 
+        _check_cancel(cancel_ev)
         ctx = await _load_meeting_context(meeting_id)
         if ctx is None:
             return
@@ -280,7 +332,9 @@ async def run_pipeline(meeting_id: str) -> None:
             num_speakers=ctx.num_speakers,
             keyterms=ctx.keyterms or None,
         )
+        _check_cancel(cancel_ev)
         await _persist_transcript(meeting_id, result)
+        _check_cancel(cancel_ev)
 
         words = await _load_transcript_words(meeting_id)
         if not words:
@@ -290,19 +344,31 @@ async def run_pipeline(meeting_id: str) -> None:
         data = await summarizer.summarize(
             prompt, context=ctx.meeting_brief, email_tone=ctx.email_tone
         )
+        _check_cancel(cancel_ev)
+        # Minutes are built server-side from the words to avoid LLM
+        # output-token truncation on long (1h+) meetings.
+        data["minutes"] = build_minutes_segments(words)
         await _apply_speaker_names_from_summary(meeting_id, data.get("speaker_names"))
         await _persist_summary(meeting_id, data, email_tone=ctx.email_tone)
+    except _CancelledByUser:
+        # Router already flipped status to FAILED + sentinel; leave it alone.
+        return
     except Exception:
         await _set_status(
             meeting_id,
             MeetingStatus.FAILED,
             error=traceback.format_exc(),
         )
+    finally:
+        _cancel_events.pop(meeting_id, None)
 
 
 async def regenerate_summary(meeting_id: str) -> str:
     """Re-run summarization against an existing transcript. Returns new Summary id."""
+    cancel_ev = asyncio.Event()
+    _cancel_events[meeting_id] = cancel_ev
     try:
+        _check_cancel(cancel_ev)
         words = await _load_transcript_words(meeting_id)
         if not words:
             raise RuntimeError("cannot regenerate: no transcript for this meeting")
@@ -316,8 +382,12 @@ async def regenerate_summary(meeting_id: str) -> str:
         data = await summarizer.summarize(
             prompt, context=ctx.meeting_brief, email_tone=ctx.email_tone
         )
+        _check_cancel(cancel_ev)
+        data["minutes"] = build_minutes_segments(words)
         await _apply_speaker_names_from_summary(meeting_id, data.get("speaker_names"))
         return await _persist_summary(meeting_id, data, email_tone=ctx.email_tone)
+    except _CancelledByUser:
+        return ""
     except Exception:
         await _set_status(
             meeting_id,
@@ -325,3 +395,5 @@ async def regenerate_summary(meeting_id: str) -> str:
             error=traceback.format_exc(),
         )
         raise
+    finally:
+        _cancel_events.pop(meeting_id, None)

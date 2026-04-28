@@ -138,9 +138,6 @@ async def test_summary_exposes_new_fields(client, sample_webm_bytes, mocker):
             "exec_summary": "خلاصه",
             "action_items": [],
             "decisions": [],
-            "minutes": [
-                {"speaker_id": "speaker_0", "text": "hi", "start_s": 0.0, "end_s": 0.5},
-            ],
             "qa": [{"question": "Q1?", "answer": "A1"}, {"question": "Q2?", "answer": None}],
             "open_questions": [{"question": "Open?", "owner": "Ali"}],
             "email_draft": {"subject": "موضوع", "body": "متن ایمیل"},

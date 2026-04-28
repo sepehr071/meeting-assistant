@@ -16,10 +16,6 @@ VALID_BRIEF = {
         {"text": "ارسال ایمیل پیگیری", "owner": None, "due_date": None},
     ],
     "decisions": ["تصویب بودجه پیشنهادی."],
-    "minutes": [
-        {"speaker_id": "S1", "text": "سلام به همه.", "start_s": 0.0, "end_s": 2.5},
-        {"speaker_id": "S2", "text": "ممنون. شروع کنیم.", "start_s": 2.5, "end_s": 5.0},
-    ],
     "qa": [
         {"question": "تخصیص بودجه برای چه فصلی؟", "answer": "فصل دوم."},
         {"question": "زمان نسخه بعدی؟", "answer": None},

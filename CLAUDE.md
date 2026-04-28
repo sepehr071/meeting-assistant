@@ -172,7 +172,9 @@ API key never reaches the browser. Frontend calls `POST /api/realtime/token` →
 
 OpenRouter call uses `response_format: { type: "json_schema", json_schema: { name, strict: true, schema } }`. The schema is in `app/services/summarizer.py::JSON_SCHEMA` (do not duplicate elsewhere). `summarize()` validates returned JSON via `jsonschema.validate` before returning — `ValueError` on mismatch.
 
-`_body()` pins `temperature=0.2`. Verbatim `minutes[].text` echo + `speaker_names` mapping rely on low-temperature output; the email body still reads naturally at this temp. Don't bump above ~0.3 without re-validating that `minutes[].text` matches the input transcript word-for-word.
+`_body()` pins `temperature=0.2` + `reasoning={"effort": "minimal", "exclude": True}`. Low temperature stabilizes `speaker_names` mapping; minimal reasoning is the latency lever for 1h+ meetings (Gemini 3 Flash Preview default reasoning was the bottleneck). `exclude: True` strips reasoning tokens from the response payload (we don't render them).
+
+`minutes` is **NOT** in `JSON_SCHEMA`. The LLM no longer generates the verbatim turn-by-turn record — `pipeline.build_minutes_segments(words)` produces it server-side from `Transcript.words_json` and the pipeline injects it via `data["minutes"] = ...` before `_persist_summary`. Reason: long meetings used to truncate when the LLM hit its output-token ceiling. Server-side minutes are deterministic, complete, and free up output budget for the high-signal LLM fields.
 
 ### Summarizer context injection
 
@@ -314,6 +316,18 @@ If a route enqueues `BackgroundTasks` work that the client should see as in-flig
 
 Only `tests/test_summarizer_mock.py::VALID_BRIEF` runs through `jsonschema.validate` and must include every required field. The pipeline e2e tests (`test_pipeline_e2e.VALID_BRIEF`, `test_meetings_extensions::test_summary_exposes_new_fields`) patch `app.services.summarizer.summarize` directly with `return_value=...` — they bypass validation, so they don't need the new field unless your downstream code depends on its presence in the dict.
 
+### Pipeline cancellation is best-effort, sentinel-based
+
+`services/pipeline.py` keeps `_cancel_events: dict[str, asyncio.Event]`. `run_pipeline` and `regenerate_summary` each register an event on entry and `pop` it in `finally`. `_check_cancel(ev)` is called at four boundaries: pipeline entry, after `transcribe_async`, after `_persist_transcript`, after `summarize`. The `POST /{id}/cancel` endpoint flips status to `FAILED` with `error_message=pipeline.CANCELLED_SENTINEL` synchronously (instant UI feedback) **then** signals the event. ElevenLabs Scribe HTTP can't be torn down mid-call, so an in-flight Scribe request still completes — the result is discarded by the next `_check_cancel`. Frontend (`page.tsx`, `meeting-status.tsx`) treats `error_message === CANCELLED_SENTINEL` as a separate state from real errors. Don't add a new `CANCELLED` enum — the sentinel approach skips an Alembic migration.
+
+### ASGITransport + BackgroundTasks: test client awaits BG before responding
+
+`tests/conftest.py` wires httpx via `ASGITransport(app=app)`. Starlette runs `BackgroundTasks` *after the response body is sent* — but with ASGITransport that means inside the same `await client.post(...)` call. If a mocked pipeline coroutine blocks (e.g. an `asyncio.Event.wait()`), the upload `await` itself hangs forever. Don't try to test mid-pipeline behavior by blocking transcribe/summarize mocks; mock `app.services.pipeline.run_pipeline` to a no-op async fn instead and assert endpoint contracts. See `test_cancel_endpoint_flips_status_synchronously` for the pattern.
+
+### Long lists use `content-visibility: auto`, not virtualization libs
+
+Minutes view renders 100s–1000s of rows for long meetings. Each segment Card sets `style={{ contentVisibility: "auto", containIntrinsicSize: "auto 88px" }}`. Browser skips paint + layout for off-screen rows — same effective benefit as `react-virtual` with zero deps and no scroll-position math. Chrome/Edge only (which is the target). Don't reach for a virtualization library before trying this pattern on any new long-list views.
+
 ## Conventions
 
 - **Python:** `snake_case`, type hints on all signatures, `from __future__ import annotations` at top of files using forward refs. SQLAlchemy 2.0 declarative + async sessions.
@@ -345,6 +359,9 @@ Only `tests/test_summarizer_mock.py::VALID_BRIEF` runs through `jsonschema.valid
 | Where do speakers get seeded? | `backend/app/services/pipeline.py::_persist_transcript` |
 | Where is LLM speaker→name auto-assign applied? | `backend/app/services/speakers.py::apply_speaker_names` (skips speakers with non-empty `display_name`, syncs to series glossary like `rename_speaker`) |
 | Where does the pipeline call speaker auto-assign? | `backend/app/services/pipeline.py::_apply_speaker_names_from_summary` (after `summarize`, in both `run_pipeline` and `regenerate_summary`) |
+| Where are minutes built (server-side, not LLM)? | `backend/app/services/pipeline.py::build_minutes_segments` (uses shared `_segment_words`; pipeline assigns `data["minutes"] = build_minutes_segments(words)` before persist) |
+| Where is in-flight processing cancelled? | `backend/app/routers/meetings.py::cancel_meeting` flips status synchronously; `backend/app/services/pipeline.py::request_cancel` signals the asyncio.Event in `_cancel_events` |
+| Where does the frontend render the cancelled state? | `frontend/components/meeting-status.tsx` (badge label) + `frontend/app/meetings/[id]/page.tsx` (failed card) — both check `error_message === CANCELLED_SENTINEL` from `lib/api.ts` |
 | Where is the diarized prompt built? | `backend/app/services/pipeline.py::build_diarized_prompt` (>1.2s gap or speaker change → new segment) |
 | Where is the SSE summary endpoint? | `backend/app/routers/meetings.py::stream_summary` |
 | Where are status labels translated? | `frontend/components/meeting-status.tsx` |

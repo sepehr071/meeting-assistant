@@ -15,10 +15,6 @@ VALID_BRIEF = {
         {"text": "ارسال یادداشت پیگیری", "owner": None, "due_date": None},
     ],
     "decisions": ["تأیید برنامه‌ی پیشنهادی."],
-    "minutes": [
-        {"speaker_id": "speaker_0", "text": "سلام.", "start_s": 0.0, "end_s": 0.5},
-        {"speaker_id": "speaker_1", "text": "دنیا.", "start_s": 0.51, "end_s": 1.0},
-    ],
 }
 
 
@@ -209,6 +205,78 @@ async def test_regenerate_creates_new_summary_row(client, sample_webm_bytes, moc
         "regenerate must not re-invoke transcription"
     )
     assert summarize_mock.call_count == summarize_calls_before + 1
+
+
+async def test_cancel_endpoint_flips_status_synchronously(client, sample_webm_bytes, mocker):
+    """Cancel endpoint sets status=failed + sentinel without waiting for the
+    background pipeline. Pipeline integration (event signal) is best-effort
+    and tested separately."""
+
+    async def noop_pipeline(_mid: str) -> None:
+        return None
+
+    mocker.patch("app.services.pipeline.run_pipeline", side_effect=noop_pipeline)
+
+    body = await _upload(client, sample_webm_bytes)
+    mid = body["id"]
+
+    # Pipeline is mocked, so status stays at 'uploaded'.
+    detail = (await client.get(f"/api/meetings/{mid}")).json()
+    assert detail["status"] == "uploaded"
+
+    resp = await client.post(f"/api/meetings/{mid}/cancel")
+    assert resp.status_code == 200, resp.text
+    body2 = resp.json()
+    assert body2["cancelled"] is True
+    # No pipeline registered itself, so signalled is False — that's fine.
+    assert body2["signalled"] is False
+
+    detail2 = (await client.get(f"/api/meetings/{mid}")).json()
+    assert detail2["status"] == "failed"
+    assert detail2["error_message"] == "cancelled by user"
+
+
+async def test_cancel_signals_running_pipeline(mocker, apply_test_settings):
+    """Calling pipeline.request_cancel after a pipeline registers its event
+    sets the event so the next _check_cancel raises."""
+    from app.models import Meeting, MeetingStatus
+    from app.services import pipeline
+
+    # Seed a meeting in the test DB.
+    SessionLocal = apply_test_settings
+    async with SessionLocal() as session:
+        meeting = Meeting(
+            id="test-cancel-1",
+            title="t",
+            status=MeetingStatus.UPLOADED,
+            original_filename="t.webm",
+            audio_path="/nowhere",
+        )
+        session.add(meeting)
+        await session.commit()
+
+    # Manually register a cancel event (mimicking a running pipeline).
+    ev = asyncio.Event()
+    pipeline._cancel_events["test-cancel-1"] = ev
+
+    try:
+        signalled = await pipeline.request_cancel("test-cancel-1")
+        assert signalled is True
+        assert ev.is_set()
+    finally:
+        pipeline._cancel_events.pop("test-cancel-1", None)
+
+    # Unknown id returns False.
+    assert (await pipeline.request_cancel("does-not-exist")) is False
+
+
+async def test_cancel_rejected_when_done(client, sample_webm_bytes, mocker):
+    _patch_pipeline_externals(mocker)
+    body = await _upload(client, sample_webm_bytes)
+    mid = body["id"]
+    await _poll_status(client, mid, "done")
+    resp = await client.post(f"/api/meetings/{mid}/cancel")
+    assert resp.status_code == 400
 
 
 async def test_oversize_upload_rejected(client, sample_webm_bytes, mocker):

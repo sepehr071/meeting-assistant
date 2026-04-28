@@ -18,7 +18,6 @@ JSON_SCHEMA: dict = {
         "exec_summary",
         "action_items",
         "decisions",
-        "minutes",
         "qa",
         "open_questions",
         "email_draft",
@@ -40,20 +39,6 @@ JSON_SCHEMA: dict = {
             },
         },
         "decisions": {"type": "array", "items": {"type": "string"}},
-        "minutes": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["speaker_id", "text", "start_s", "end_s"],
-                "properties": {
-                    "speaker_id": {"type": "string"},
-                    "text": {"type": "string"},
-                    "start_s": {"type": "number"},
-                    "end_s": {"type": "number"},
-                },
-            },
-        },
         "qa": {
             "type": "array",
             "items": {
@@ -177,6 +162,11 @@ def _body(
         # Low temperature for stable speaker mapping + verbatim minutes echo.
         # Email body still reads naturally at this temp.
         "temperature": 0.2,
+        # Minimal reasoning: ~5% of max_tokens. Shrinks latency on long
+        # transcripts (1h+ meetings) while keeping enough reasoning for the
+        # strict JSON schema + speaker mapping. exclude=True strips reasoning
+        # tokens from the response payload (we don't render them anywhere).
+        "reasoning": {"effort": "minimal", "exclude": True},
         "stream": stream,
     }
 

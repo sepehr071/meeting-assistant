@@ -437,6 +437,38 @@ async def rename_speaker(
     return SpeakerRead.model_validate(speaker)
 
 
+@router.post("/{meeting_id}/cancel")
+async def cancel_meeting(
+    meeting_id: str,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Stop an in-flight pipeline. Best-effort: we flip status synchronously
+    and signal the running task; in-progress Scribe/OpenRouter HTTP calls
+    can't be torn down mid-flight but their results are discarded.
+    """
+    meeting = await session.get(Meeting, meeting_id)
+    if meeting is None:
+        raise HTTPException(status_code=404, detail="meeting not found")
+
+    in_flight = {
+        MeetingStatus.UPLOADED,
+        MeetingStatus.TRANSCRIBING,
+        MeetingStatus.SUMMARIZING,
+    }
+    if meeting.status not in in_flight:
+        raise HTTPException(
+            status_code=400,
+            detail=f"meeting status is {meeting.status.value}; nothing to cancel",
+        )
+
+    meeting.status = MeetingStatus.FAILED
+    meeting.error_message = pipeline.CANCELLED_SENTINEL
+    await session.commit()
+
+    signalled = await pipeline.request_cancel(meeting_id)
+    return {"cancelled": True, "signalled": signalled}
+
+
 @router.post("/{meeting_id}/regenerate-summary")
 async def regenerate(
     meeting_id: str,

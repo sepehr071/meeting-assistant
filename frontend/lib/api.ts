@@ -222,6 +222,13 @@ export const renameSpeaker = (
 export const regenerate = (id: string): Promise<SummaryRead> =>
   request(`/meetings/${id}/regenerate-summary`, { method: "POST" });
 
+export const cancelMeeting = (
+  id: string,
+): Promise<{ cancelled: boolean; signalled: boolean }> =>
+  request(`/meetings/${id}/cancel`, { method: "POST" });
+
+export const CANCELLED_SENTINEL = "cancelled by user";
+
 export const getRealtimeToken = (
   seriesId?: string | null,
 ): Promise<RealtimeToken> =>

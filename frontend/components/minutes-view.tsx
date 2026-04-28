@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Pencil } from "lucide-react";
+import { Pencil, Search, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -164,6 +164,39 @@ export function MinutesView({ meetingId }: MinutesViewProps) {
     queryFn: () => getMeeting(meetingId),
   });
 
+  const [query, setQuery] = useState("");
+  const [activeSpeakers, setActiveSpeakers] = useState<Set<string>>(new Set());
+
+  const aliasMap = useMemo<Record<string, string | null>>(() => {
+    const map: Record<string, string | null> = {};
+    for (const sp of meetingQ.data?.speakers ?? []) {
+      map[sp.speaker_id] = sp.display_name;
+    }
+    for (const [id, info] of Object.entries(summaryQ.data?.speakers ?? {})) {
+      if (!(id in map)) map[id] = info.display_name;
+    }
+    return map;
+  }, [meetingQ.data?.speakers, summaryQ.data?.speakers]);
+
+  const speakerIds = useMemo(() => {
+    const set = new Set<string>();
+    for (const seg of summaryQ.data?.minutes ?? []) set.add(seg.speaker_id);
+    for (const id of Object.keys(aliasMap)) set.add(id);
+    return Array.from(set).sort();
+  }, [summaryQ.data?.minutes, aliasMap]);
+
+  const filtered = useMemo(() => {
+    const segments = summaryQ.data?.minutes ?? [];
+    const q = query.trim().toLowerCase();
+    return segments.filter((seg) => {
+      if (activeSpeakers.size > 0 && !activeSpeakers.has(seg.speaker_id)) {
+        return false;
+      }
+      if (q && !seg.text.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [summaryQ.data?.minutes, query, activeSpeakers]);
+
   if (summaryQ.isLoading || meetingQ.isLoading) {
     return (
       <div className="space-y-2">
@@ -195,14 +228,6 @@ export function MinutesView({ meetingId }: MinutesViewProps) {
 
   if (!summaryQ.data) return null;
 
-  const aliasMap: Record<string, string | null> = {};
-  for (const sp of meetingQ.data?.speakers ?? []) {
-    aliasMap[sp.speaker_id] = sp.display_name;
-  }
-  for (const [id, info] of Object.entries(summaryQ.data.speakers ?? {})) {
-    if (!(id in aliasMap)) aliasMap[id] = info.display_name;
-  }
-
   if (summaryQ.data.minutes.length === 0) {
     return (
       <Card>
@@ -213,29 +238,112 @@ export function MinutesView({ meetingId }: MinutesViewProps) {
     );
   }
 
+  const total = summaryQ.data.minutes.length;
+  const filtersActive = query.trim().length > 0 || activeSpeakers.size > 0;
+
+  function toggleSpeaker(id: string) {
+    setActiveSpeakers((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function clearFilters() {
+    setQuery("");
+    setActiveSpeakers(new Set());
+  }
+
   return (
-    <div className="space-y-2">
-      {summaryQ.data.minutes.map((segment, idx) => (
-        <Card key={idx} size="sm">
-          <CardContent className="flex items-start gap-3">
-            <SpeakerChip
-              meetingId={meetingId}
-              speakerId={segment.speaker_id}
-              alias={aliasMap[segment.speaker_id] ?? null}
-              seriesId={meetingQ.data?.series_id ?? null}
-            />
-            <p
-              dir="rtl"
-              className="flex-1 text-sm leading-7 whitespace-pre-wrap"
+    <div className="space-y-3">
+      <div
+        className="sticky top-0 z-10 space-y-2 rounded-md border bg-background/95 p-3 backdrop-blur"
+        dir="rtl"
+      >
+        <div className="relative">
+          <Search className="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="جستجو در متن جلسه…"
+            className="pr-9"
+          />
+        </div>
+        {speakerIds.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1">
+            {speakerIds.map((id) => {
+              const name = aliasMap[id] ?? id;
+              const active = activeSpeakers.has(id);
+              return (
+                <Badge
+                  key={id}
+                  variant={active ? "default" : "outline"}
+                  className="cursor-pointer"
+                  onClick={() => toggleSpeaker(id)}
+                  dir={dirOf(name)}
+                >
+                  {name}
+                </Badge>
+              );
+            })}
+          </div>
+        )}
+        <div className="flex items-center justify-between text-xs text-muted-foreground">
+          <span>
+            {filtersActive ? `${filtered.length} از ${total} بخش` : `${total} بخش`}
+          </span>
+          {filtersActive && (
+            <button
+              type="button"
+              onClick={clearFilters}
+              className="inline-flex items-center gap-1 text-primary hover:underline"
             >
-              {segment.text}
-            </p>
-            <span className="shrink-0 font-mono text-xs text-muted-foreground tabular-nums">
-              {formatTime(segment.start_s)}–{formatTime(segment.end_s)}
-            </span>
+              <X className="size-3" />
+              <span>پاک کردن فیلترها</span>
+            </button>
+          )}
+        </div>
+      </div>
+
+      {filtered.length === 0 ? (
+        <Card>
+          <CardContent className="py-6 text-center text-sm text-muted-foreground">
+            موردی با این فیلتر پیدا نشد
           </CardContent>
         </Card>
-      ))}
+      ) : (
+        <div className="space-y-2">
+          {filtered.map((segment, idx) => (
+            <Card
+              key={`${segment.speaker_id}-${segment.start_s}-${idx}`}
+              size="sm"
+              style={{
+                contentVisibility: "auto",
+                containIntrinsicSize: "auto 88px",
+              }}
+            >
+              <CardContent className="flex items-start gap-3">
+                <SpeakerChip
+                  meetingId={meetingId}
+                  speakerId={segment.speaker_id}
+                  alias={aliasMap[segment.speaker_id] ?? null}
+                  seriesId={meetingQ.data?.series_id ?? null}
+                />
+                <p
+                  dir="rtl"
+                  className="flex-1 text-sm leading-7 whitespace-pre-wrap"
+                >
+                  {segment.text}
+                </p>
+                <span className="shrink-0 font-mono text-xs text-muted-foreground tabular-nums">
+                  {formatTime(segment.start_s)}–{formatTime(segment.end_s)}
+                </span>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

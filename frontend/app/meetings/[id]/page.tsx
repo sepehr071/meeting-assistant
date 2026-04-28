@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, RefreshCw } from "lucide-react";
+import { ArrowRight, CircleStop, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 
 import { ActionItemsView } from "@/components/action-items-view";
@@ -26,7 +26,13 @@ import {
   TabsList,
   TabsTrigger,
 } from "@/components/ui/tabs";
-import { getMeeting, regenerate, type MeetingDetail } from "@/lib/api";
+import {
+  CANCELLED_SENTINEL,
+  cancelMeeting,
+  getMeeting,
+  regenerate,
+  type MeetingDetail,
+} from "@/lib/api";
 import { dirOf, formatJalali } from "@/lib/rtl";
 
 const IN_FLIGHT = new Set(["uploaded", "transcribing", "summarizing"]);
@@ -78,6 +84,26 @@ export default function MeetingDetailPage() {
     onError: (err) => {
       const message = err instanceof Error ? err.message : "خطا";
       toast.error(`بازتولید ناموفق: ${message}`);
+    },
+  });
+
+  const cancelMut = useMutation({
+    mutationFn: () => cancelMeeting(id),
+    onMutate: () => {
+      queryClient.setQueryData<MeetingDetail>(["meeting", id], (old) =>
+        old
+          ? { ...old, status: "failed", error_message: CANCELLED_SENTINEL }
+          : old,
+      );
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["meeting", id] });
+      toast.success("پردازش متوقف شد");
+    },
+    onError: (err) => {
+      const message = err instanceof Error ? err.message : "خطا";
+      toast.error(`توقف ناموفق: ${message}`);
+      queryClient.invalidateQueries({ queryKey: ["meeting", id] });
     },
   });
 
@@ -134,7 +160,20 @@ export default function MeetingDetailPage() {
         </div>
       </header>
 
-      <div className="flex justify-end">
+      <div className="flex justify-end gap-2">
+        {status && IN_FLIGHT.has(status) && (
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={() => cancelMut.mutate()}
+            disabled={cancelMut.isPending}
+          >
+            <CircleStop
+              className={cancelMut.isPending ? "animate-pulse" : undefined}
+            />
+            <span>توقف پردازش</span>
+          </Button>
+        )}
         <Button
           variant="outline"
           size="sm"
@@ -161,14 +200,26 @@ export default function MeetingDetailPage() {
       )}
 
       {status === "failed" ? (
-        <Card>
-          <CardContent className="space-y-1 py-4 text-sm text-destructive" dir="rtl">
-            <p className="font-semibold">خطا در پردازش جلسه</p>
-            <p className="text-muted-foreground">
-              {meeting?.error_message || "خطای ناشناخته"}
-            </p>
-          </CardContent>
-        </Card>
+        meeting?.error_message === CANCELLED_SENTINEL ? (
+          <Card>
+            <CardContent
+              className="space-y-1 py-4 text-sm text-muted-foreground"
+              dir="rtl"
+            >
+              <p className="font-semibold text-foreground">پردازش متوقف شد</p>
+              <p>این جلسه توسط کاربر متوقف شد. می‌توانید دوباره بارگذاری کنید.</p>
+            </CardContent>
+          </Card>
+        ) : (
+          <Card>
+            <CardContent className="space-y-1 py-4 text-sm text-destructive" dir="rtl">
+              <p className="font-semibold">خطا در پردازش جلسه</p>
+              <p className="text-muted-foreground">
+                {meeting?.error_message || "خطای ناشناخته"}
+              </p>
+            </CardContent>
+          </Card>
+        )
       ) : (
         <Tabs defaultValue="summary" className="w-full">
           <TabsList className="w-full flex-wrap">

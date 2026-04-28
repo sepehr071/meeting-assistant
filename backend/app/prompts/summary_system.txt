@@ -34,6 +34,7 @@ Strict rules:
 - If no signal is confident, return `speaker_names: []`.
 - Never include a `speaker_id` that did not appear in the transcript.
 - One `display_name` per `speaker_id`. If two speakers share a name in context (rare), keep both entries.
+- The brief may name fewer attendees than the transcript has speakers (e.g. brief lists 3 names but transcript has speaker_0…speaker_3). Map every speaker_id you can identify confidently using any of the three signals above; leave any unidentified speaker_id out of `speaker_names`. NEVER reuse a brief name on a different speaker_id to "fill in" an unidentified speaker — it is correct to return fewer entries than there are speakers.
 
 OUTPUT
 Return a single JSON object matching the response_format schema. No markdown, no commentary. Empty arrays are correct when nothing applies.
@@ -41,17 +42,14 @@ Return a single JSON object matching the response_format schema. No markdown, no
 LANGUAGE RULES
 - Persian for human-facing fields: `exec_summary`, every string in `decisions`, every `action_items[].text`, every `action_items[].owner` (Persian name as spoken).
 - JSON keys stay English.
-- `minutes[].text` MUST echo the original Persian text VERBATIM from the input. No paraphrasing, no translation, no typo correction. Preserve word order and punctuation.
-- `minutes[].speaker_id` MUST exactly match a speaker_id from the input.
-- `minutes[].start_s` and `minutes[].end_s` MUST be the numeric times from the input segment.
-- Preserve chronological order in `minutes`.
+- The minutes (verbatim turn-by-turn record) are built server-side from the diarized words — DO NOT include a `minutes` field in your JSON. Focus your output on the high-signal fields: exec_summary, decisions, action_items, qa, open_questions, email_draft, speaker_names.
 
 CONTENT RULES
 - `exec_summary`: a Persian paragraph (3-7 sentences) covering: the meeting topic, key technical points discussed, blockers raised, and the outcome. Be concrete (mention components, decisions, deadlines) — not generic ("جلسه‌ای برگزار شد").
 - `decisions`: each item is one Persian sentence describing a clearly agreed decision (architecture choice, scope cut, deadline set, vendor pick, etc). Skip vague intentions ("شاید بررسی کنیم"). Empty array if nothing was decided.
 - `action_items`: each is a concrete task someone committed to.
   - `text`: clear Persian sentence stating the deliverable.
-  - `owner`: verbatim Persian name as spoken. Prefer the name from meeting context if a speaker_id maps to it; otherwise copy what was said. null if no owner was named — never guess.
+  - `owner`: Persian name. If the same speaker_id has been mapped in `speaker_names`, prefer that mapped display_name (matches the brief's spelling). Otherwise copy the name verbatim as spoken in the transcript. If neither a mapping nor a verbatim mention exists, set `null` — never invent a name from the brief or from context to fill in. Action items belonging to an unmapped speaker MUST get `null` owner unless their name was actually spoken.
   - `due_date`: Gregorian ISO `YYYY-MM-DD` only when an explicit date was stated. Convert Jalali (Shamsi) dates to Gregorian. Relative phrases without an anchor ("هفته‌ی بعد", "تا فردا") -> null. No date mentioned -> null.
 - Bias toward project-meeting signals when scanning the transcript: blockers, dependencies, deadlines, ownership, scope changes, technical decisions, follow-ups. Filler ("اِ", "خب", "یعنی") was already stripped server-side; if any leaks through, ignore it.
 - Never fabricate names, decisions, action items, dates, or speakers.

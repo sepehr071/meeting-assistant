@@ -2,7 +2,11 @@
 
 import { useQuery } from "@tanstack/react-query";
 
-import { getMeeting, type MeetingStatus as MeetingStatusValue } from "@/lib/api";
+import {
+  CANCELLED_SENTINEL,
+  getMeeting,
+  type MeetingStatus as MeetingStatusValue,
+} from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import {
@@ -68,11 +72,13 @@ export function MeetingStatus({
   }
 
   const inFlight = IN_FLIGHT.has(status);
-  const label = LABELS[status];
+  const isCancelled =
+    status === "failed" && data?.error_message === CANCELLED_SENTINEL;
+  const label = isCancelled ? "متوقف شده" : LABELS[status];
 
   const badge = (
     <Badge
-      variant={variantFor(status)}
+      variant={isCancelled ? "secondary" : variantFor(status)}
       className={cn(
         status === "done" && "bg-emerald-500 text-white border-transparent",
         className,
@@ -84,7 +90,7 @@ export function MeetingStatus({
 
   return (
     <div className="inline-flex items-center gap-2">
-      {status === "failed" && data?.error_message ? (
+      {status === "failed" && data?.error_message && !isCancelled ? (
         <Tooltip>
           <TooltipTrigger render={<span tabIndex={0}>{badge}</span>} />
           <TooltipContent>{data.error_message}</TooltipContent>
