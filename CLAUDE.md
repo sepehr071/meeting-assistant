@@ -1,6 +1,6 @@
 # Meeting Assistant — Project Guide
 
-Persian (Farsi) AI meeting assistant. FastAPI backend + Next.js frontend. Three ingest modes: (1) upload an existing recording, (2) live-record from mic in browser, (3) live-record another tab's audio via `getDisplayMedia` (works for Google Meet / Zoom Web / Teams Web — no extension required). All live modes run simultaneous (a) realtime captions via Scribe v2 Realtime WebSocket and (b) batch diarization via Scribe v2 on stop. Summarized into 7 artifacts (exec summary, action items, decisions, speaker-attributed minutes, Q&A, open questions, follow-up email draft) by Google Gemini 3 Flash Preview through OpenRouter. Recurring meetings group into series (with shared glossary + speaker-name memory + email-tone preference); free-form tags add cross-cutting organization. Optional Chrome MV3 extension provides one-click tab capture without the picker dialog.
+Persian (Farsi) AI meeting assistant. FastAPI backend + Next.js frontend. Three ingest modes: (1) upload an existing recording, (2) live-record from mic in browser, (3) live-record another tab's audio via `getDisplayMedia` (works for Google Meet / Zoom Web / Teams Web). All live modes run simultaneous (a) realtime captions via Scribe v2 Realtime WebSocket and (b) batch diarization via Scribe v2 on stop. Summarized into 7 artifacts (exec summary, action items, decisions, speaker-attributed minutes, Q&A, open questions, follow-up email draft) by Google Gemini 3 Flash Preview through OpenRouter. Recurring meetings group into series (with shared glossary + speaker-name memory + email-tone preference); free-form tags add cross-cutting organization.
 
 Single user. Local SQLite. No auth. Hardcoded model id via `.env`.
 
@@ -70,26 +70,6 @@ frontend/
     ├── rtl.ts              # isPersian, formatJalali
     ├── scribe-realtime.ts  # WebSocket client; appends keyterms (50×20chars) as URL params
     └── pcm-worklet.ts      # AudioWorklet source string + base64 helper
-
-extension/
-├── src/
-│   ├── manifest.json       # MV3 manifest; tabCapture + offscreen + activeTab perms
-│   ├── service_worker.ts   # orchestrates tabCapture stream-id handoff to offscreen
-│   ├── offscreen.html
-│   ├── offscreen.ts        # capture core: tab+mic mix → AudioWorklet PCM → Scribe Realtime WS; on stop posts WebM to /api/meetings/upload (mirrors recorder.tsx)
-│   ├── popup.html
-│   ├── popup.ts            # form (title/series/tags/brief) + recording UI; pure TS, no framework
-│   ├── popup.css
-│   ├── lib/
-│   │   ├── scribe-realtime.ts  # COPY of frontend/lib/scribe-realtime.ts (verbatim)
-│   │   ├── pcm-worklet.ts      # COPY of frontend/lib/pcm-worklet.ts (verbatim)
-│   │   ├── api.ts              # subset port of frontend/lib/api.ts (uploadMeeting, listSeries, listTags, suggestSeries, getRealtimeToken)
-│   │   ├── messaging.ts        # popup ↔ SW ↔ offscreen message types (StartPayload, StatusUpdate, CaptionUpdate, ...)
-│   │   └── storage.ts          # chrome.storage.local for backendUrl
-│   └── icons/                  # 16/48/128 PNG (placeholders ok)
-├── vite.config.ts          # @crxjs/vite-plugin
-├── tsconfig.json
-└── package.json            # pnpm; deps: @crxjs/vite-plugin, @types/chrome, vite, typescript
 ```
 
 ## Run
@@ -103,13 +83,6 @@ uv run uvicorn app.main:app --port 8000
 # 2. frontend (port 3000)
 cd frontend
 pnpm dev
-
-# 3. extension (load unpacked into Chrome)
-cd extension
-pnpm install
-pnpm dev          # vite + crxjs hot-reload, output to extension/dist
-# Then: chrome://extensions → Developer mode → Load unpacked → extension/dist
-# Backend URL defaults to http://localhost:8000; configurable in popup.
 ```
 
 `.env` (in `backend/`):
@@ -123,7 +96,7 @@ OPENROUTER_TITLE=Meeting Assistant
 STORAGE_DIR=./storage
 DATABASE_URL=sqlite+aiosqlite:///./meeting.db
 ALLOWED_ORIGIN=http://localhost:3000
-# ALLOWED_ORIGIN_REGEX=^(http://localhost:3000|chrome-extension://[a-p]+)$  # only set to override the default; default already allows the web app + Chrome extension
+# ALLOWED_ORIGIN_REGEX=^http://localhost:3000$  # only set to override the default
 ```
 
 ## Tests
@@ -198,7 +171,7 @@ Tags are flat M:N labels (`Tag` + `MeetingTag`). Independent of series. Used for
 
 `frontend/components/tab-recorder.tsx` calls `navigator.mediaDevices.getDisplayMedia({ audio: true, video: true })` → user picks a tab in the browser's system dialog → user MUST tick "Share tab audio" (browser-level checkbox; if missed, no audio track and we surface error). Video tracks are stopped immediately; only the audio track feeds the same `AudioContext` mixer used by `recorder.tsx`. Optional mic mix (default on) goes through `getUserMedia` and joins via a `MediaStreamDestination`. Auto-stops on the audio track's `ended` event when the user clicks the browser's "Stop sharing" bar.
 
-Cross-browser: Chrome / Edge solid; Firefox tab-audio support partial. No browser extension needed for this path. Tradeoff vs the Chrome extension: extra picker click each time, but works in any Chromium browser including Edge with zero install.
+Cross-browser: Chrome / Edge solid; Firefox tab-audio support partial.
 
 ### Tunable Scribe params (per meeting)
 
@@ -208,53 +181,6 @@ Stored on `Meeting` row, set via upload form:
 - `meeting_brief: str | None` — free-text context. Fed to LLM only, not Scribe.
 
 Always-on at the Scribe call: `no_verbatim=True`, `tag_audio_events=False`, `language_code="fas"`, `diarize=True`, `timestamps_granularity="word"`, `model_id="scribe_v2"`. See `app/services/transcription.py`.
-
-## Online meetings via Chrome extension
-
-`extension/` (MV3) captures the **active tab's audio** (everyone in a Google Meet / Zoom Web / Teams Web call) plus the user's mic, mixes them via Web Audio, and reuses the existing realtime + batch pipeline. The web app's `tab-recorder.tsx` does the same thing via `getDisplayMedia` with a picker dialog; the extension is the no-picker / one-click variant for users willing to install it.
-
-### Architecture
-
-```
-popup (form + start/stop)
-   ↓ chrome.runtime.sendMessage
-service_worker.ts
-   ├─ chrome.tabCapture.getMediaStreamId()  → stream ID
-   └─ chrome.offscreen.createDocument()
-          ↓
-offscreen.ts (long-lived DOM context)
-   ├─ getUserMedia({ chromeMediaSource:"tab", chromeMediaSourceId })   ← tab audio
-   ├─ getUserMedia({ audio:{...} })                                     ← mic (optional)
-   ├─ AudioContext mix → MediaStreamDestination
-   │       ├→ AudioWorklet (PCM_WORKLET_SRC) → ScribeRealtimeClient (live captions)
-   │       └→ MediaRecorder (WebM blob)
-   ├─ tabSrc.connect(ctx.destination)   // CRITICAL: keeps tab audio audible to user
-   └─ on STOP: blob → POST /api/meetings/upload → existing pipeline
-```
-
-The service worker only orchestrates (it cannot hold long-lived connections — MV3 idles in 30s). All Web Audio + WebSocket lives in the offscreen document, which stays alive as long as it's open.
-
-### Why offscreen, not a content script
-
-Content scripts run inside the meeting page and can be blocked / modified by the host page. The offscreen document is a private extension page with full DOM + Web Audio + WebSocket; not visible to Meet/Zoom.
-
-### Why not the Meet Media API or a meeting bot
-
-- Meet Media API (Apr 2026): Developer Preview, requires libwebrtc C++ client and a 4–7 week paid security review. Not worth for single-user.
-- Meeting bot (Recall.ai-style): cloud server per call, ToS grey area. Overkill.
-- Result: Chrome extension is the simplest path that works on any Chrome-tab meeting.
-
-### Critical gotcha — tab silence
-
-If `tabSource.connect(audioContext.destination)` is omitted, the tab goes silent during recording. Always wire the monitor path. Comment marks it CRITICAL in `offscreen.ts`. Note: `tab-recorder.tsx` (web app) does NOT have this problem — `getDisplayMedia` keeps tab audio audible automatically.
-
-### Critical gotcha — user-gesture window in extension popup
-
-`chrome.tabCapture.getMediaStreamId` must be called **synchronously** within the popup click handler, before any `await`. Chromium (Chrome + Edge) only honors the user-gesture token for ~1 second; any awaited promise resolution before the call exhausts it and Chrome rejects with `Permission dismissed`. We pre-cache the active tab ID at popup mount, then call `getMediaStreamId` as the first sync action on click — async work (sendMessage etc.) goes in its callback. See `extension/src/popup.ts::handleStart`.
-
-### Reused code
-
-`extension/src/lib/scribe-realtime.ts` and `extension/src/lib/pcm-worklet.ts` are byte-identical copies of `frontend/lib/`. Keep them in sync — when the realtime API or PCM format changes, update both.
 
 ## Gotchas
 
@@ -298,7 +224,7 @@ Pyright also flags `client.speech_to_text.convert(...)` as unknown attribute on 
 
 ### CORS
 
-`backend/app/main.py` builds `allow_origin_regex` from `settings.ALLOWED_ORIGIN` (web app) plus `chrome-extension://[a-p]+` (extension; same scheme on Chrome AND Edge — Edge does NOT use `edge-extension://`). Override with `ALLOWED_ORIGIN_REGEX` env var if needed. `allow_credentials=False` because the extension does not send cookies — flip back to `True` only if you add cookie auth.
+`backend/app/main.py` builds `allow_origin_regex` from `settings.ALLOWED_ORIGIN`. Override with `ALLOWED_ORIGIN_REGEX` env var if needed.
 
 ### Audio retention
 
@@ -335,7 +261,6 @@ Minutes view renders 100s–1000s of rows for long meetings. Each segment Card s
 - **RTL:** `<html dir="rtl">` global. Persian text uses Vazirmatn (`--font-sans` CSS var). Use `dirOf(text)` from `lib/rtl.ts` for mixed-content containers. Persian dates via `Intl.DateTimeFormat('fa-IR-u-ca-persian')` (helper: `formatJalali`).
 - **Errors:** raise `HTTPException` from routers; `RuntimeError` from services with prefixed message (`"Scribe failed: ..."`). Pipeline writes traceback into `Meeting.error_message` on failure — never swallow exceptions silently.
 - **No trailing summaries** in dev chat. Code-first.
-- **Extension:** plain TypeScript (no React in popup). DOM API + a tiny render() function. CSS hand-rolled in `popup.css`. Persian RTL via `<html lang="fa" dir="rtl">`.
 
 ## Adding a new field to Meeting
 
@@ -371,10 +296,6 @@ Minutes view renders 100s–1000s of rows for long meetings. Each segment Card s
 | Where does pipeline read series-derived params? | `backend/app/services/pipeline.py::_load_meeting_context` (returns `_MeetingCtx` with `keyterms` + `email_tone`) |
 | How are M:N tags assigned? | `backend/app/routers/meetings.py::_set_meeting_tags` (delete + insert into `meeting_tags`) |
 | Where is the tab audio captured (web app, picker)? | `frontend/components/tab-recorder.tsx::handleStart` |
-| Where is the tab audio captured (extension, no picker)? | `extension/src/offscreen.ts::start` |
-| How does the popup talk to the offscreen doc? | via `service_worker.ts` relay; types in `extension/src/lib/messaging.ts` |
-| How is the WebM blob uploaded from the extension? | `extension/src/offscreen.ts::stop` → `extension/src/lib/api.ts::uploadMeeting` → existing `/api/meetings/upload` |
-| Where to change the backend URL? | popup → "آدرس بک‌اند" field; persisted in `chrome.storage.local` via `extension/src/lib/storage.ts` |
 
 ## What this project intentionally does NOT do
 
@@ -385,5 +306,5 @@ Minutes view renders 100s–1000s of rows for long meetings. Each segment Card s
 - Cross-language meetings (Persian only; flip `language_code` if you need another single language).
 - Background workers (Redis/Celery). Pipeline runs in FastAPI `BackgroundTasks`, fine for single-user load.
 - Persisted live captions. They're display-only, discarded on stop. The diarized batch transcript is the authoritative record.
-- Cross-browser extension (Firefox / Safari MV3 differs — Chrome only for now).
-- In-meeting "recording" indicator overlay (could be a future content script for consent UX).
+- Browser extension (removed). Tab capture is web-app only via `getDisplayMedia`.
+- In-meeting "recording" indicator overlay.

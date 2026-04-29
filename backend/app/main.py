@@ -15,14 +15,12 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(title="Meeting Assistant", lifespan=lifespan)
 
-_allow_regex = settings.ALLOWED_ORIGIN_REGEX or (
-    rf"^({re.escape(settings.ALLOWED_ORIGIN)}|chrome-extension://[a-p]+)$"
-)
+_allow_regex = settings.ALLOWED_ORIGIN_REGEX or rf"^{re.escape(settings.ALLOWED_ORIGIN)}$"
 
 app.add_middleware(
     CORSMiddleware,
     allow_origin_regex=_allow_regex,
-    allow_credentials=False,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )

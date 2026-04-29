@@ -26,9 +26,8 @@ out/
 *.tsbuildinfo
 next-env.d.ts
 
-# Vite / extension build
+# Build output
 dist/
-.vite/
 
 # Database & user data
 *.db
