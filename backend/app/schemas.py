@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.models import EmailTone, KeytermSource, MeetingStatus
 
@@ -177,3 +177,16 @@ class RealtimeToken(BaseModel):
 
 class RealtimeTokenRequest(BaseModel):
     series_id: str | None = None
+
+
+class ChatMessageRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    role: Literal["user", "assistant"]
+    content: str
+    created_at: datetime
+
+
+class ChatAskBody(BaseModel):
+    message: str = Field(min_length=1, max_length=4000)

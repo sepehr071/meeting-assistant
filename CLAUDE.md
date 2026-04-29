@@ -254,6 +254,10 @@ Only `tests/test_summarizer_mock.py::VALID_BRIEF` runs through `jsonschema.valid
 
 Minutes view renders 100s–1000s of rows for long meetings. Each segment Card sets `style={{ contentVisibility: "auto", containIntrinsicSize: "auto 88px" }}`. Browser skips paint + layout for off-screen rows — same effective benefit as `react-virtual` with zero deps and no scroll-position math. Chrome/Edge only (which is the target). Don't reach for a virtualization library before trying this pattern on any new long-list views.
 
+### Chat endpoint is POST + SSE — use fetch+ReadableStream, not EventSource
+
+`/api/meetings/{id}/chat/ask` returns `text/event-stream` but is **POST** (body carries the question). `EventSource` is GET-only and cannot send a body, so the frontend uses `fetch(..., {method:"POST", body, signal})` + manual `ReadableStream` decoding (`frontend/lib/api.ts::streamChatAsk`). Server emits structured frames `data: {"type":"delta"|"done"|"error", ...}\n\n`. Don't try to switch to `streamSummary`'s `EventSource` pattern — it won't work for POST. Persist semantics: user message is committed BEFORE stream starts (durable on failure); assistant message committed only on successful completion (no partial rows).
+
 ## Conventions
 
 - **Python:** `snake_case`, type hints on all signatures, `from __future__ import annotations` at top of files using forward refs. SQLAlchemy 2.0 declarative + async sessions.
@@ -296,6 +300,9 @@ Minutes view renders 100s–1000s of rows for long meetings. Each segment Card s
 | Where does pipeline read series-derived params? | `backend/app/services/pipeline.py::_load_meeting_context` (returns `_MeetingCtx` with `keyterms` + `email_tone`) |
 | How are M:N tags assigned? | `backend/app/routers/meetings.py::_set_meeting_tags` (delete + insert into `meeting_tags`) |
 | Where is the tab audio captured (web app, picker)? | `frontend/components/tab-recorder.tsx::handleStart` |
+| Where is the per-meeting chat endpoint? | `backend/app/routers/chat.py` (GET `/messages`, POST `/ask` SSE, DELETE `/messages`; persists user msg pre-stream, assistant msg post-stream; 409 if status≠`done`) |
+| Where does chat assemble meeting context? | `backend/app/services/chat.py::build_meeting_context` (reuses `pipeline.build_diarized_prompt` + dumps all 7 summary artifacts + speaker_names) |
+| Where is the chat tab rendered? | `frontend/app/meetings/[id]/page.tsx` (9th tab, `accent: true` → indigo→violet gradient + `Sparkles` icon) + `frontend/components/chat-view.tsx` (UI) + `frontend/lib/api.ts::streamChatAsk` (POST + ReadableStream SSE parser) |
 
 ## What this project intentionally does NOT do
 

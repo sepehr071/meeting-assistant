@@ -9,10 +9,12 @@ import {
   CircleStop,
   Clock,
   RefreshCw,
+  Sparkles,
 } from "lucide-react";
 import { toast } from "sonner";
 
 import { ActionItemsView } from "@/components/action-items-view";
+import { ChatView } from "@/components/chat-view";
 import { DecisionsView } from "@/components/decisions-view";
 import { EmailDraftView } from "@/components/email-draft-view";
 import { MeetingStatus } from "@/components/meeting-status";
@@ -47,7 +49,13 @@ const PROCESSING_LABELS: Record<string, string> = {
   summarizing: "درحال خلاصه‌سازی…",
 };
 
-const TABS = [
+interface TabDef {
+  value: string;
+  label: string;
+  accent?: boolean;
+}
+
+const TABS: TabDef[] = [
   { value: "summary", label: "خلاصه" },
   { value: "actions", label: "اقدامات" },
   { value: "decisions", label: "تصمیم‌ها" },
@@ -56,7 +64,8 @@ const TABS = [
   { value: "email", label: "پیش‌نویس ایمیل" },
   { value: "minutes", label: "صورتجلسه" },
   { value: "transcript", label: "رونوشت" },
-] as const;
+  { value: "chat", label: "چت با جلسه", accent: true },
+];
 
 function formatDuration(seconds: number | null): string | null {
   if (seconds == null) return null;
@@ -253,7 +262,16 @@ export default function MeetingDetailPage() {
           >
             <TabsList className="px-1">
               {TABS.map((t) => (
-                <TabsTrigger key={t.value} value={t.value}>
+                <TabsTrigger
+                  key={t.value}
+                  value={t.value}
+                  className={
+                    t.accent
+                      ? "gap-1.5 text-indigo-600 dark:text-indigo-400 data-active:bg-gradient-to-l data-active:from-indigo-500 data-active:to-violet-500 data-active:text-white data-active:font-bold data-active:border-transparent"
+                      : undefined
+                  }
+                >
+                  {t.accent && <Sparkles className="size-3.5" />}
                   {t.label}
                 </TabsTrigger>
               ))}
@@ -282,6 +300,9 @@ export default function MeetingDetailPage() {
           </TabsContent>
           <TabsContent value="transcript" className="pt-2">
             <TranscriptView meetingId={id} />
+          </TabsContent>
+          <TabsContent value="chat" className="pt-2">
+            <ChatView meetingId={id} ready={meeting?.status === "done"} />
           </TabsContent>
         </Tabs>
       )}

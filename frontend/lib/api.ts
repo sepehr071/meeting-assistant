@@ -345,3 +345,110 @@ export function streamSummary(
   es.onerror = () => es.close();
   return es;
 }
+
+// Chat
+
+export interface ChatMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  created_at: string;
+}
+
+export const listChatMessages = (id: string): Promise<ChatMessage[]> =>
+  request(`/meetings/${id}/chat/messages`);
+
+export async function clearChatMessages(id: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/meetings/${id}/chat/messages`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`${res.status} ${res.statusText}: ${text}`);
+  }
+}
+
+export function streamChatAsk(
+  id: string,
+  message: string,
+  onDelta: (text: string) => void,
+  onDone: (assistantId: string) => void,
+  onError: (msg: string) => void,
+): () => void {
+  const ac = new AbortController();
+
+  (async () => {
+    let res: Response;
+    try {
+      res = await fetch(`${API_BASE}/meetings/${id}/chat/ask`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "text/event-stream",
+        },
+        body: JSON.stringify({ message }),
+        signal: ac.signal,
+      });
+    } catch (err) {
+      if ((err as Error)?.name === "AbortError") return;
+      onError((err as Error)?.message ?? "خطای شبکه");
+      return;
+    }
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      onError(`${res.status} ${res.statusText}: ${text}`);
+      return;
+    }
+
+    const reader = res.body?.getReader();
+    if (!reader) {
+      onError("پاسخ قابل خواندن نیست");
+      return;
+    }
+
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        // Split on SSE event boundaries (\n\n)
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop() ?? "";
+
+        for (const part of parts) {
+          const lines = part.split("\n");
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            const raw = line.slice(6).trim();
+            if (!raw) continue;
+            let evt: { type: string; text?: string; id?: string; message?: string };
+            try {
+              evt = JSON.parse(raw);
+            } catch {
+              continue;
+            }
+            if (evt.type === "delta" && typeof evt.text === "string") {
+              onDelta(evt.text);
+            } else if (evt.type === "done") {
+              onDone(evt.id ?? "");
+            } else if (evt.type === "error") {
+              onError(evt.message ?? "خطای ناشناخته");
+            }
+          }
+        }
+      }
+    } catch (err) {
+      if ((err as Error)?.name === "AbortError") return;
+      onError((err as Error)?.message ?? "خطا در خواندن جریان");
+    } finally {
+      reader.releaseLock();
+    }
+  })();
+
+  return () => ac.abort();
+}
