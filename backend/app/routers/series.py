@@ -4,8 +4,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth import get_current_user
 from app.db import get_session
-from app.models import KeytermSource, Meeting, Series, SeriesKeyterm
+from app.models import KeytermSource, Meeting, Series, SeriesKeyterm, User
 from app.schemas import (
     KeyTermCreate,
     KeyTermRead,
@@ -19,12 +20,25 @@ from app.services import glossary
 router = APIRouter()
 
 
+async def _get_owned_series(
+    session: AsyncSession, series_id: str, user: User
+) -> Series:
+    s = await session.get(Series, series_id)
+    if s is None or s.owner_id != user.id:
+        raise HTTPException(status_code=404, detail="series not found")
+    return s
+
+
 @router.get("", response_model=list[SeriesWithCount])
-async def list_series(session: AsyncSession = Depends(get_session)) -> list[SeriesWithCount]:
+async def list_series(
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> list[SeriesWithCount]:
     rows = (
         await session.execute(
             select(Series, func.count(Meeting.id))
             .outerjoin(Meeting, Meeting.series_id == Series.id)
+            .where(Series.owner_id == user.id)
             .group_by(Series.id)
             .order_by(Series.name.asc())
         )
@@ -44,17 +58,21 @@ async def list_series(session: AsyncSession = Depends(get_session)) -> list[Seri
 
 @router.post("", response_model=SeriesRead, status_code=status.HTTP_201_CREATED)
 async def create_series(
-    body: SeriesCreate, session: AsyncSession = Depends(get_session)
+    body: SeriesCreate,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
 ) -> SeriesRead:
     name = body.name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="name required")
     existing = (
-        await session.execute(select(Series).where(Series.name == name))
+        await session.execute(
+            select(Series).where(Series.name == name, Series.owner_id == user.id)
+        )
     ).scalar_one_or_none()
     if existing is not None:
         raise HTTPException(status_code=409, detail="series with this name exists")
-    s = Series(name=name, email_tone=body.email_tone)
+    s = Series(name=name, email_tone=body.email_tone, owner_id=user.id)
     session.add(s)
     await session.commit()
     await session.refresh(s)
@@ -66,10 +84,9 @@ async def update_series(
     series_id: str,
     body: SeriesUpdate,
     session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
 ) -> SeriesRead:
-    s = await session.get(Series, series_id)
-    if s is None:
-        raise HTTPException(status_code=404, detail="series not found")
+    s = await _get_owned_series(session, series_id, user)
     if body.name is not None:
         new_name = body.name.strip()
         if not new_name:
@@ -84,11 +101,11 @@ async def update_series(
 
 @router.delete("/{series_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_series(
-    series_id: str, session: AsyncSession = Depends(get_session)
+    series_id: str,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
 ) -> None:
-    s = await session.get(Series, series_id)
-    if s is None:
-        raise HTTPException(status_code=404, detail="series not found")
+    s = await _get_owned_series(session, series_id, user)
     await session.delete(s)
     await session.commit()
 
@@ -98,10 +115,9 @@ async def list_keyterms(
     series_id: str,
     source: KeytermSource | None = Query(None),
     session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
 ) -> list[KeyTermRead]:
-    s = await session.get(Series, series_id)
-    if s is None:
-        raise HTTPException(status_code=404, detail="series not found")
+    await _get_owned_series(session, series_id, user)
     stmt = (
         select(SeriesKeyterm)
         .where(SeriesKeyterm.series_id == series_id)
@@ -122,10 +138,9 @@ async def add_keyterm(
     series_id: str,
     body: KeyTermCreate,
     session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
 ) -> KeyTermRead:
-    s = await session.get(Series, series_id)
-    if s is None:
-        raise HTTPException(status_code=404, detail="series not found")
+    await _get_owned_series(session, series_id, user)
     row = await glossary.add_manual_term(session, series_id, body.term)
     if row is None:
         raise HTTPException(
@@ -139,7 +154,9 @@ async def accept_keyterm(
     series_id: str,
     term_id: str,
     session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
 ) -> KeyTermRead:
+    await _get_owned_series(session, series_id, user)
     row = await session.get(SeriesKeyterm, term_id)
     if row is None or row.series_id != series_id:
         raise HTTPException(status_code=404, detail="keyterm not found")
@@ -158,7 +175,9 @@ async def reject_keyterm(
     series_id: str,
     term_id: str,
     session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
 ) -> None:
+    await _get_owned_series(session, series_id, user)
     row = await session.get(SeriesKeyterm, term_id)
     if row is None or row.series_id != series_id:
         raise HTTPException(status_code=404, detail="keyterm not found")
@@ -167,9 +186,9 @@ async def reject_keyterm(
 
 @router.get("/{series_id}/speaker-names", response_model=list[str])
 async def list_speaker_names(
-    series_id: str, session: AsyncSession = Depends(get_session)
+    series_id: str,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
 ) -> list[str]:
-    s = await session.get(Series, series_id)
-    if s is None:
-        raise HTTPException(status_code=404, detail="series not found")
+    await _get_owned_series(session, series_id, user)
     return await glossary.list_speaker_names(session, series_id)

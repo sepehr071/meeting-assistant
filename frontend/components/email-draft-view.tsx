@@ -5,11 +5,9 @@ import { AlertTriangle, Copy, FileText, Mail } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/empty-state";
-import { getSummary, type SummaryRead } from "@/lib/api";
+import { PanelHeader } from "@/components/panel-header";
+import { getMeeting, getSummary, type MeetingDetail, type SummaryRead } from "@/lib/api";
 import { dirOf } from "@/lib/rtl";
 
 function isNotFound(err: unknown): boolean {
@@ -32,14 +30,20 @@ export function EmailDraftView({ meetingId }: { meetingId: string }) {
     retry: false,
   });
 
+  const meetingQ = useQuery<MeetingDetail>({
+    queryKey: ["meeting", meetingId],
+    queryFn: () => getMeeting(meetingId),
+  });
+
   if (isLoading) {
     return (
-      <Card>
-        <CardContent className="space-y-2 py-5">
-          <Skeleton className="h-4 w-1/2" />
-          <Skeleton className="h-32 w-full" />
-        </CardContent>
-      </Card>
+      <>
+        <PanelHeader kicker="پیش‌نویس ایمیل" title="…" />
+        <div className="space-y-2">
+          <div className="h-8 rounded animate-shimmer" />
+          <div className="h-32 rounded animate-shimmer" />
+        </div>
+      </>
     );
   }
 
@@ -59,60 +63,68 @@ export function EmailDraftView({ meetingId }: { meetingId: string }) {
   const email = data?.email;
   if (!email || (!email.subject && !email.body)) {
     return (
-      <EmptyState
-        icon={Mail}
-        title="پیش‌نویس ایمیل تولید نشد"
-        hint="جلسه‌ی کوتاه یا بدون اقدام مشخص — مدل پیش‌نویسی پیشنهاد نکرد."
-      />
+      <>
+        <PanelHeader kicker="پیش‌نویس ایمیل" title="پیش‌نویسی تولید نشد" />
+        <EmptyState
+          icon={Mail}
+          title="پیش‌نویس ایمیل تولید نشد"
+          hint="جلسه‌ی کوتاه یا بدون اقدام مشخص — مدل پیش‌نویسی پیشنهاد نکرد."
+        />
+      </>
     );
   }
 
   const fullEmail = `${email.subject ?? ""}\n\n${email.body ?? ""}`.trim();
+  const toneLabel = email.tone === "casual" ? "خودمانی" : "رسمی";
+  const seriesName = meetingQ.data?.series?.name;
+  const subtitle = seriesName
+    ? `بازنویسی شده برای لحن سری «${seriesName}» — ${toneLabel}`
+    : `لحن: ${toneLabel}`;
 
   return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between gap-2">
-        <Badge variant="secondary" className="gap-1.5">
-          <span
-            className="size-1.5 rounded-full bg-primary"
-            aria-hidden="true"
-          />
-          {email.tone === "casual" ? "لحن خودمانی" : "لحن رسمی"}
-        </Badge>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => copy(fullEmail)}
-          aria-label="کپی متن ایمیل"
-        >
-          <Copy className="size-4" />
-          <span>کپی کامل</span>
-        </Button>
-      </CardHeader>
-      <CardContent className="space-y-4 text-sm">
+    <>
+      <PanelHeader
+        kicker="پیش‌نویس ایمیل"
+        title="پیش‌نویس آماده ارسال"
+        subtitle={subtitle}
+        actions={
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => copy(fullEmail)}
+            className="gap-1.5 border-line"
+          >
+            <Copy className="size-3.5" />
+            کپی کامل
+          </Button>
+        }
+      />
+
+      <div className="overflow-hidden rounded-2xl border border-line bg-surface">
         {email.subject && (
-          <div className="space-y-1.5">
-            <p className="text-xs font-medium text-muted-foreground">موضوع</p>
+          <div className="border-b border-line-soft px-6 py-4">
+            <p className="mb-1 text-[11px] font-medium uppercase tracking-wider text-ink-4">
+              موضوع
+            </p>
             <p
-              className="rounded-md border border-border bg-muted/30 px-3 py-2 font-medium leading-7"
               dir={dirOf(email.subject)}
+              className="text-[15px] font-semibold leading-7 text-ink"
             >
               {email.subject}
             </p>
           </div>
         )}
         {email.body && (
-          <div className="space-y-1.5">
-            <p className="text-xs font-medium text-muted-foreground">متن</p>
+          <div className="px-6 py-5">
             <pre
               dir={dirOf(email.body)}
-              className="whitespace-pre-wrap rounded-md border border-border bg-muted/30 px-3 py-3 font-sans text-sm leading-8 text-foreground/90"
+              className="whitespace-pre-wrap font-sans text-sm leading-[2] text-ink-2"
             >
               {email.body}
             </pre>
           </div>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </>
   );
 }

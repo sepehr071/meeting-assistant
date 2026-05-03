@@ -44,12 +44,12 @@ async def test_keyterms_crud(client):
     assert r.json() == []
 
 
-async def test_accept_keyterm_promotes_suggested(client, apply_test_settings):
+async def test_accept_keyterm_promotes_suggested(client, apply_test_settings, default_user_id):
     from app.models import Series
     from app.services import glossary
 
     async with apply_test_settings() as session:
-        s = Series(name="Eng Sync")
+        s = Series(name="Eng Sync", owner_id=default_user_id)
         session.add(s)
         await session.commit()
         sid = s.id
@@ -67,12 +67,12 @@ async def test_accept_keyterm_promotes_suggested(client, apply_test_settings):
     assert r.json()["source"] == "accepted"
 
 
-async def test_speaker_names_endpoint(client, apply_test_settings):
+async def test_speaker_names_endpoint(client, apply_test_settings, default_user_id):
     from app.models import Series
     from app.services import glossary
 
     async with apply_test_settings() as session:
-        s = Series(name="Standup")
+        s = Series(name="Standup", owner_id=default_user_id)
         session.add(s)
         await session.commit()
         sid = s.id

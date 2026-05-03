@@ -3,10 +3,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, FileText, HelpCircle } from "lucide-react";
 
-import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/empty-state";
+import { PanelHeader } from "@/components/panel-header";
 import { getSummary, type SummaryRead } from "@/lib/api";
 import { dirOf } from "@/lib/rtl";
 
@@ -23,11 +21,10 @@ export function OpenQuestionsView({ meetingId }: { meetingId: string }) {
 
   if (isLoading) {
     return (
-      <Card>
-        <CardContent className="py-5">
-          <Skeleton className="h-4 w-3/4" />
-        </CardContent>
-      </Card>
+      <>
+        <PanelHeader kicker="مسائل باز" title="…" />
+        <div className="h-20 rounded-xl animate-shimmer" />
+      </>
     );
   }
 
@@ -47,30 +44,55 @@ export function OpenQuestionsView({ meetingId }: { meetingId: string }) {
   const items = data?.open_questions ?? [];
   if (items.length === 0) {
     return (
-      <EmptyState
-        icon={HelpCircle}
-        title="مسئله‌ی بازی ثبت نشد"
-        hint="پرسش بدون پاسخی برای پیگیری شناسایی نشد."
-      />
+      <>
+        <PanelHeader kicker="مسائل باز" title="مسئله‌ی بازی ثبت نشد" />
+        <EmptyState
+          icon={HelpCircle}
+          title="مسئله‌ی بازی ثبت نشد"
+          hint="پرسش بدون پاسخی برای پیگیری شناسایی نشد."
+        />
+      </>
     );
   }
 
   return (
-    <div className="space-y-2">
-      {items.map((item, i) => (
-        <Card key={i} className="transition-colors hover:border-foreground/20">
-          <CardContent className="flex items-start justify-between gap-3 py-4 text-sm">
-            <p className="flex-1 leading-7" dir={dirOf(item.question)}>
-              {item.question}
+    <>
+      <PanelHeader
+        kicker="مسائل باز"
+        title="پیگیری‌های لازم بعد از این جلسه"
+      />
+      <div className="flex flex-col gap-2.5">
+        {items.map((q, i) => (
+          <article
+            key={i}
+            className="flex items-start gap-3 rounded-xl border border-line bg-surface px-5 py-3.5"
+          >
+            <span
+              className="grid size-6 shrink-0 place-items-center rounded-md"
+              style={{
+                background: "oklch(0.97 0.04 80)",
+                color: "oklch(0.45 0.13 80)",
+              }}
+            >
+              <AlertTriangle className="size-3.5" />
+            </span>
+            <p
+              dir={dirOf(q.question)}
+              className="flex-1 text-sm leading-7 text-ink"
+            >
+              {q.question}
             </p>
-            {item.owner && (
-              <Badge variant="secondary" dir={dirOf(item.owner)}>
-                {item.owner}
-              </Badge>
+            {q.owner && (
+              <span
+                dir={dirOf(q.owner)}
+                className="shrink-0 rounded-full bg-bg-soft px-2.5 py-0.5 text-[11px] text-ink-3"
+              >
+                {q.owner}
+              </span>
             )}
-          </CardContent>
-        </Card>
-      ))}
-    </div>
+          </article>
+        ))}
+      </div>
+    </>
   );
 }

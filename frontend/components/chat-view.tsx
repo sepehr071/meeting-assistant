@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Sparkles, Trash2, Send } from "lucide-react";
+import { Send, Sparkles, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -18,7 +18,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { PanelHeader } from "@/components/panel-header";
 import { Textarea } from "@/components/ui/textarea";
 import {
   clearChatMessages,
@@ -27,6 +27,13 @@ import {
   type ChatMessage,
 } from "@/lib/api";
 import { dirOf } from "@/lib/rtl";
+
+const SUGGESTIONS = [
+  "چه تصمیماتی گرفته شد؟",
+  "اقدامات مهم چیست؟",
+  "بلاکر اصلی چه بود؟",
+  "مسائل بازِ پیگیری",
+];
 
 interface ChatViewProps {
   meetingId: string;
@@ -76,12 +83,12 @@ export function ChatView({ meetingId, ready }: ChatViewProps) {
 
   const isSending = pendingAssistant !== null;
 
-  function handleSend() {
-    const text = input.trim();
-    if (!text || isSending) return;
+  function send(text: string) {
+    const t = text.trim();
+    if (!t || isSending) return;
 
     setInput("");
-    setPendingUser({ content: text });
+    setPendingUser({ content: t });
     setPendingAssistant("");
 
     if (textareaRef.current) {
@@ -90,11 +97,11 @@ export function ChatView({ meetingId, ready }: ChatViewProps) {
 
     abortRef.current = streamChatAsk(
       meetingId,
-      text,
+      t,
       (delta) => {
         setPendingAssistant((prev) => (prev ?? "") + delta);
       },
-      (_assistantId) => {
+      () => {
         queryClient.invalidateQueries({ queryKey: ["chat", meetingId] });
         setPendingUser(null);
         setPendingAssistant(null);
@@ -102,9 +109,9 @@ export function ChatView({ meetingId, ready }: ChatViewProps) {
       (msg) => {
         toast.error(msg);
         setPendingAssistant(null);
-        queryClient.invalidateQueries({ queryKey: ["chat", meetingId] }).then(
-          () => setPendingUser(null),
-        );
+        queryClient
+          .invalidateQueries({ queryKey: ["chat", meetingId] })
+          .then(() => setPendingUser(null));
       },
     );
   }
@@ -112,7 +119,7 @@ export function ChatView({ meetingId, ready }: ChatViewProps) {
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      handleSend();
+      send(input);
     }
   }
 
@@ -128,17 +135,26 @@ export function ChatView({ meetingId, ready }: ChatViewProps) {
 
   if (!ready) {
     return (
-      <Card>
-        <CardContent className="py-10 text-center" dir="rtl">
-          <div className="mx-auto mb-3 flex size-12 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500/15 to-violet-500/15">
-            <Sparkles className="size-6 text-indigo-500" />
+      <>
+        <PanelHeader kicker="چت" title="چت در دسترس نیست" />
+        <div className="rounded-2xl border border-line bg-surface px-6 py-10 text-center">
+          <div
+            className="mx-auto mb-3 grid size-12 place-items-center rounded-full"
+            style={{
+              background:
+                "linear-gradient(135deg, var(--brand-soft), oklch(0.95 0.04 285))",
+            }}
+          >
+            <Sparkles className="size-6 text-brand" />
           </div>
-          <p className="text-sm font-semibold text-foreground">چت در دسترس نیست</p>
-          <p className="mt-1 text-sm text-muted-foreground">
-            ابتدا باید جلسه پردازش شود تا چت در دسترس قرار گیرد.
+          <p className="text-sm font-semibold text-ink">
+            ابتدا باید جلسه پردازش شود
           </p>
-        </CardContent>
-      </Card>
+          <p className="mt-1 text-sm text-ink-3">
+            پس از آماده شدن خلاصه، اینجا می‌توانید با جلسه گفتگو کنید.
+          </p>
+        </div>
+      </>
     );
   }
 
@@ -146,116 +162,142 @@ export function ChatView({ meetingId, ready }: ChatViewProps) {
   const isEmpty = messages.length === 0 && !pendingUser && !pendingAssistant;
 
   return (
-    <div className="flex flex-col gap-3">
-      {/* Header */}
-      <div className="flex items-center justify-between" dir="rtl">
-        <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
-          <span className="flex size-7 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-violet-500 text-white shadow-sm shadow-indigo-500/25">
-            <Sparkles className="size-3.5" />
-          </span>
-          چت با جلسه
-        </h2>
-        <AlertDialog>
-          <AlertDialogTrigger
-            render={
-              <Button
-                variant="ghost"
-                size="sm"
-                className="gap-1.5 text-muted-foreground hover:text-destructive"
-                disabled={clearMut.isPending || (messages.length === 0 && !pendingUser)}
-              >
-                <Trash2 className="size-3.5" />
-                پاک‌سازی تاریخچه
-              </Button>
-            }
-          />
-          <AlertDialogContent dir="rtl">
-            <AlertDialogHeader>
-              <AlertDialogTitle>پاک‌سازی تاریخچه چت</AlertDialogTitle>
-              <AlertDialogDescription>
-                تمام پیام‌های این جلسه حذف خواهند شد. این عمل قابل بازگشت نیست.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogClose render={<Button variant="outline">انصراف</Button>} />
-              <AlertDialogClose
-                render={
-                  <Button
-                    variant="destructive"
-                    onClick={() => clearMut.mutate()}
-                    disabled={clearMut.isPending}
-                  >
-                    حذف
-                  </Button>
-                }
-              />
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-      </div>
+    <div className="flex h-full flex-col">
+      <PanelHeader
+        kicker="چت"
+        title="با این جلسه گفتگو کنید"
+        subtitle="هر سؤالی درباره محتوا، تصمیم‌ها یا مسئولیت‌ها بپرسید — پاسخ از روی رونوشت کامل تولید می‌شود."
+        actions={
+          <AlertDialog>
+            <AlertDialogTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="gap-1.5 text-ink-3 hover:text-destructive"
+                  disabled={
+                    clearMut.isPending ||
+                    (messages.length === 0 && !pendingUser)
+                  }
+                >
+                  <Trash2 className="size-3.5" />
+                  پاک‌سازی
+                </Button>
+              }
+            />
+            <AlertDialogContent dir="rtl">
+              <AlertDialogHeader>
+                <AlertDialogTitle>پاک‌سازی تاریخچه چت</AlertDialogTitle>
+                <AlertDialogDescription>
+                  تمام پیام‌های این جلسه حذف خواهند شد. این عمل قابل بازگشت
+                  نیست.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogClose render={<Button variant="outline">انصراف</Button>} />
+                <AlertDialogClose
+                  render={
+                    <Button
+                      variant="destructive"
+                      onClick={() => clearMut.mutate()}
+                      disabled={clearMut.isPending}
+                    >
+                      حذف
+                    </Button>
+                  }
+                />
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        }
+      />
 
-      {/* Messages area */}
+      {isEmpty && (
+        <div className="mb-5 flex flex-wrap gap-2" dir="rtl">
+          {SUGGESTIONS.map((s) => (
+            <button
+              key={s}
+              type="button"
+              onClick={() => send(s)}
+              className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-3.5 py-1.5 text-xs text-ink-2 transition-colors hover:border-brand hover:text-brand"
+            >
+              <Sparkles className="size-3 text-brand" />
+              {s}
+            </button>
+          ))}
+        </div>
+      )}
+
       <div
-        className="flex flex-col gap-3 overflow-y-auto rounded-xl border border-border/60 bg-gradient-to-b from-muted/30 to-muted/10 p-4 shadow-inner"
-        style={{ maxHeight: "65vh", minHeight: "16rem" }}
-        dir="rtl"
+        className="flex flex-1 flex-col overflow-hidden rounded-2xl border border-line bg-surface"
+        style={{ minHeight: 480 }}
       >
-        {isEmpty ? (
-          <div className="flex flex-1 flex-col items-center justify-center gap-2 py-10 text-center">
-            <div className="flex size-12 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500/15 to-violet-500/15">
-              <Sparkles className="size-6 text-indigo-500" />
-            </div>
-            <p className="text-sm font-medium text-foreground">
-              با محتوای جلسه گفتگو کنید
-            </p>
-            <p className="text-xs text-muted-foreground">
-              مثلاً: «چه تصمیماتی گرفته شد؟» یا «اقدامات سپهر چیست؟»
-            </p>
-          </div>
-        ) : (
-          <>
-            {messages.map((msg) => (
-              <MessageBubble key={msg.id} message={msg} />
-            ))}
-
-            {pendingUser && (
-              <UserBubble content={pendingUser.content} />
-            )}
-
-            {pendingAssistant !== null && (
-              <AssistantBubble content={pendingAssistant} streaming />
-            )}
-          </>
-        )}
-        <div ref={bottomRef} />
-      </div>
-
-      {/* Input row */}
-      <div
-        className="flex items-end gap-2 rounded-xl border border-border/60 bg-card p-2 shadow-sm focus-within:border-indigo-400/60 focus-within:ring-2 focus-within:ring-indigo-400/20"
-        dir="rtl"
-      >
-        <Textarea
-          ref={textareaRef}
-          value={input}
-          onChange={handleInput}
-          onKeyDown={handleKeyDown}
-          placeholder="پیام خود را بنویسید…"
-          dir={dirOf(input) || "rtl"}
-          disabled={isSending}
-          rows={1}
-          className="min-h-0 flex-1 resize-none overflow-hidden border-0 bg-transparent py-1.5 shadow-none focus-visible:ring-0 focus-visible:outline-none"
-          style={{ height: "auto" }}
-        />
-        <Button
-          onClick={handleSend}
-          disabled={!input.trim() || isSending}
-          size="sm"
-          className="shrink-0 gap-1.5 bg-gradient-to-l from-indigo-500 to-violet-500 text-white shadow-sm shadow-indigo-500/30 hover:from-indigo-600 hover:to-violet-600 disabled:opacity-50"
+        <div
+          className="flex flex-1 flex-col gap-4 overflow-y-auto p-6 scroll-thin"
+          dir="rtl"
         >
-          <Send className="size-3.5" />
-          ارسال
-        </Button>
+          {isEmpty ? (
+            <div className="m-auto flex flex-col items-center gap-2 text-center">
+              <div
+                className="grid size-12 place-items-center rounded-full"
+                style={{
+                  background:
+                    "linear-gradient(135deg, var(--brand-soft), oklch(0.95 0.04 285))",
+                }}
+              >
+                <Sparkles className="size-6 text-brand" />
+              </div>
+              <p className="text-sm font-medium text-ink">
+                با محتوای جلسه گفتگو کنید
+              </p>
+              <p className="text-xs text-ink-3">
+                از پیشنهادهای بالا استفاده کنید یا سؤال خود را بنویسید.
+              </p>
+            </div>
+          ) : (
+            <>
+              {messages.map((msg) => (
+                <MessageBubble key={msg.id} message={msg} />
+              ))}
+              {pendingUser && <UserBubble content={pendingUser.content} />}
+              {pendingAssistant !== null && (
+                <AssistantBubble content={pendingAssistant} streaming />
+              )}
+            </>
+          )}
+          <div ref={bottomRef} />
+        </div>
+
+        <div
+          className="flex items-end gap-2.5 border-t border-line bg-bg-soft p-3"
+          dir="rtl"
+        >
+          <Textarea
+            ref={textareaRef}
+            value={input}
+            onChange={handleInput}
+            onKeyDown={handleKeyDown}
+            placeholder="پیام خود را بنویسید…"
+            dir={dirOf(input) || "rtl"}
+            disabled={isSending}
+            rows={1}
+            className="min-h-0 flex-1 resize-none overflow-hidden border-line bg-surface py-2 shadow-none focus-visible:ring-1 focus-visible:ring-brand/30"
+            style={{ height: "auto" }}
+          />
+          <Button
+            onClick={() => send(input)}
+            disabled={!input.trim() || isSending}
+            size="sm"
+            className="shrink-0 gap-1.5 text-white"
+            style={{
+              background:
+                "linear-gradient(135deg, var(--brand) 0%, var(--brand-2) 100%)",
+            }}
+          >
+            <Send className="size-3.5" />
+            ارسال
+          </Button>
+        </div>
       </div>
 
       <style>{`
@@ -265,7 +307,7 @@ export function ChatView({ meetingId, ready }: ChatViewProps) {
         }
         .animate-cursor-blink {
           animation: cursor-blink 0.85s ease-in-out infinite;
-          color: rgb(99 102 241);
+          color: var(--brand);
           font-weight: 600;
         }
         .chat-md p { margin: 0; }
@@ -275,34 +317,29 @@ export function ChatView({ meetingId, ready }: ChatViewProps) {
         .chat-md ol { list-style: decimal; }
         .chat-md li { margin: 0.15em 0; }
         .chat-md li > p { display: inline; }
-        .chat-md strong { font-weight: 700; color: hsl(var(--foreground)); }
+        .chat-md strong { font-weight: 700; color: var(--ink); }
         .chat-md em { font-style: italic; }
         .chat-md code {
-          background: rgba(99, 102, 241, 0.12);
-          color: rgb(79, 70, 229);
+          background: var(--brand-soft);
+          color: var(--brand-ink);
           padding: 0.1em 0.35em;
           border-radius: 0.3em;
           font-size: 0.88em;
           font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
         }
-        .dark .chat-md code {
-          background: rgba(129, 140, 248, 0.18);
-          color: rgb(165, 180, 252);
-        }
         .chat-md pre {
-          background: rgba(0, 0, 0, 0.04);
+          background: var(--bg-soft);
           padding: 0.75em;
           border-radius: 0.5em;
           overflow-x: auto;
           margin: 0.5em 0;
         }
-        .dark .chat-md pre { background: rgba(255, 255, 255, 0.05); }
         .chat-md pre code { background: transparent; padding: 0; color: inherit; }
         .chat-md blockquote {
-          border-inline-start: 3px solid rgb(99, 102, 241);
+          border-inline-start: 3px solid var(--brand);
           padding-inline-start: 0.75em;
           margin: 0.5em 0;
-          color: hsl(var(--muted-foreground));
+          color: var(--ink-3);
         }
         .chat-md h1, .chat-md h2, .chat-md h3, .chat-md h4 {
           font-weight: 700;
@@ -312,20 +349,16 @@ export function ChatView({ meetingId, ready }: ChatViewProps) {
         .chat-md h1 { font-size: 1.15em; }
         .chat-md h2 { font-size: 1.08em; }
         .chat-md h3 { font-size: 1.02em; }
-        .chat-md a { color: rgb(99, 102, 241); text-decoration: underline; text-underline-offset: 2px; }
+        .chat-md a { color: var(--brand); text-decoration: underline; text-underline-offset: 2px; }
         .chat-md table { border-collapse: collapse; margin: 0.5em 0; }
-        .chat-md th, .chat-md td { border: 1px solid hsl(var(--border)); padding: 0.3em 0.6em; }
-        .chat-md hr { border: 0; border-top: 1px solid hsl(var(--border)); margin: 0.8em 0; }
+        .chat-md th, .chat-md td { border: 1px solid var(--line); padding: 0.3em 0.6em; }
+        .chat-md hr { border: 0; border-top: 1px solid var(--line); margin: 0.8em 0; }
       `}</style>
     </div>
   );
 }
 
-interface MessageBubbleProps {
-  message: ChatMessage;
-}
-
-function MessageBubble({ message }: MessageBubbleProps) {
+function MessageBubble({ message }: { message: ChatMessage }) {
   if (message.role === "user") {
     return <UserBubble content={message.content} />;
   }
@@ -334,9 +367,9 @@ function MessageBubble({ message }: MessageBubbleProps) {
 
 function UserBubble({ content }: { content: string }) {
   return (
-    <div className="flex justify-start">
+    <div className="flex items-start justify-start gap-2.5">
       <div
-        className="max-w-[85%] rounded-2xl rounded-tr-sm bg-gradient-to-br from-indigo-500 to-violet-600 px-4 py-2.5 text-white shadow-sm shadow-indigo-500/20"
+        className="max-w-[78%] rounded-2xl rounded-tr-sm bg-ink px-4 py-2.5 text-white"
         style={{
           contentVisibility: "auto",
           containIntrinsicSize: "auto 56px",
@@ -344,11 +377,21 @@ function UserBubble({ content }: { content: string }) {
       >
         <p
           dir={dirOf(content) || "rtl"}
-          className="text-sm leading-7 whitespace-pre-wrap"
+          className="whitespace-pre-wrap text-sm leading-7"
         >
           {content}
         </p>
       </div>
+      <span
+        className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-full text-[11px] font-semibold text-white"
+        style={{
+          background:
+            "linear-gradient(135deg, oklch(0.7 0.10 270), oklch(0.55 0.14 285))",
+        }}
+        aria-hidden="true"
+      >
+        س
+      </span>
     </div>
   );
 }
@@ -361,27 +404,29 @@ function AssistantBubble({
   streaming?: boolean;
 }) {
   return (
-    <div className="flex justify-end gap-2 items-start">
-      <span className="mt-1 flex size-7 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500/15 to-violet-500/15 text-indigo-500">
+    <div className="flex items-start justify-end gap-2.5">
+      <span
+        className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-lg text-white"
+        style={{
+          background:
+            "linear-gradient(135deg, var(--brand) 0%, var(--brand-2) 100%)",
+        }}
+        aria-hidden="true"
+      >
         <Sparkles className="size-3.5" />
       </span>
       <div
-        className="max-w-[85%] rounded-2xl rounded-tl-sm border border-border/60 bg-card px-4 py-2.5 shadow-sm"
+        className="max-w-[78%] rounded-2xl rounded-tl-sm bg-bg-soft px-4 py-2.5"
         style={{
           contentVisibility: "auto",
           containIntrinsicSize: "auto 56px",
         }}
       >
-        <div
-          dir="rtl"
-          className="chat-md text-sm leading-7 text-foreground"
-        >
+        <div dir="rtl" className="chat-md text-sm leading-7 text-ink">
           <ReactMarkdown remarkPlugins={[remarkGfm]}>
             {content || "​"}
           </ReactMarkdown>
-          {streaming && (
-            <span className="animate-cursor-blink">▍</span>
-          )}
+          {streaming && <span className="animate-cursor-blink">▍</span>}
         </div>
       </div>
     </div>

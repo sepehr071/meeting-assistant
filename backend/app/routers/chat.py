@@ -9,18 +9,22 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth import get_current_user
 from app.db import get_session
-from app.models import ChatMessage, Meeting, MeetingStatus, Summary, Transcript
+from app.models import ChatMessage, Meeting, MeetingStatus, Summary, Transcript, User
 from app.schemas import ChatAskBody, ChatMessageRead
 from app.services import chat as chat_service
 
 router = APIRouter()
 
 
-async def _get_ready_meeting(meeting_id: str, session: AsyncSession) -> Meeting:
-    """Return meeting if it is done with Transcript + Summary; else raise 409."""
+async def _get_ready_meeting(
+    meeting_id: str, session: AsyncSession, user: User
+) -> Meeting:
+    """Return meeting if it is owned by user AND done with Transcript +
+    Summary; else 404 (ownership) or 409 (not ready)."""
     meeting = await session.get(Meeting, meeting_id)
-    if meeting is None:
+    if meeting is None or meeting.owner_id != user.id:
         raise HTTPException(status_code=404, detail="meeting not found")
 
     if meeting.status != MeetingStatus.DONE:
@@ -52,11 +56,21 @@ async def _get_ready_meeting(meeting_id: str, session: AsyncSession) -> Meeting:
     return meeting
 
 
+async def _verify_meeting_ownership(
+    session: AsyncSession, meeting_id: str, user: User
+) -> None:
+    meeting = await session.get(Meeting, meeting_id)
+    if meeting is None or meeting.owner_id != user.id:
+        raise HTTPException(status_code=404, detail="meeting not found")
+
+
 @router.get("/messages", response_model=list[ChatMessageRead])
 async def list_chat_messages(
     meeting_id: str,
     session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
 ) -> list[ChatMessageRead]:
+    await _verify_meeting_ownership(session, meeting_id, user)
     rows = (
         await session.execute(
             select(ChatMessage)
@@ -72,8 +86,9 @@ async def ask_chat(
     meeting_id: str,
     body: ChatAskBody,
     session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
 ) -> StreamingResponse:
-    await _get_ready_meeting(meeting_id, session)
+    await _get_ready_meeting(meeting_id, session, user)
 
     # Persist user message before starting the stream so it's durable even if
     # stream fails.
@@ -145,7 +160,9 @@ async def ask_chat(
 async def clear_chat_messages(
     meeting_id: str,
     session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
 ) -> None:
+    await _verify_meeting_ownership(session, meeting_id, user)
     await session.execute(
         delete(ChatMessage).where(ChatMessage.meeting_id == meeting_id)
     )

@@ -54,7 +54,8 @@ async def apply_test_settings(monkeypatch, tmp_db_url: str, tmp_path: Path):
 
 
 @pytest_asyncio.fixture
-async def client(apply_test_settings):
+async def unauth_client(apply_test_settings):
+    """Raw client with no session — for testing auth boundaries directly."""
     from app.main import app
 
     transport = ASGITransport(app=app)
@@ -62,7 +63,50 @@ async def client(apply_test_settings):
         yield ac
 
 
+@pytest_asyncio.fixture
+async def client(apply_test_settings):
+    """Pre-authenticated client. Registers the default test user (which makes
+    that user the FIRST user — so claim_orphans assigns any pre-existing rows
+    to them) and keeps the session cookie in the jar for all subsequent
+    requests."""
+    from app.main import app
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        resp = await ac.post(
+            "/api/auth/register",
+            json={"username": "testuser", "password": "testpass123"},
+        )
+        assert resp.status_code == 201, resp.text
+        yield ac
+
+
+@pytest_asyncio.fixture
+async def second_client(apply_test_settings):
+    """Second pre-authenticated client (different user) for cross-user
+    isolation tests. Use AFTER `client` so this user is not the first."""
+    from app.main import app
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        resp = await ac.post(
+            "/api/auth/register",
+            json={"username": "otheruser", "password": "otherpass123"},
+        )
+        assert resp.status_code == 201, resp.text
+        yield ac
+
+
 @pytest.fixture
 def sample_webm_bytes() -> bytes:
     # Content irrelevant — transcription is mocked.
     return b"WEBM_FAKE_AUDIO\x00" * 100
+
+
+@pytest_asyncio.fixture
+async def default_user_id(client) -> str:
+    """ID of the default `client` fixture's user. Useful for seeding owned
+    rows directly via the DB (bypassing API)."""
+    r = await client.get("/api/auth/me")
+    assert r.status_code == 200
+    return r.json()["id"]

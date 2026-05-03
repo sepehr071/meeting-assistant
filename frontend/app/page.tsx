@@ -3,22 +3,28 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
-import { Calendar, Clock, Inbox, Layers, SearchX, X } from "lucide-react";
+import {
+  Calendar,
+  Clock,
+  Filter,
+  Inbox,
+  Search,
+  SearchX,
+  Users,
+  X,
+} from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { EmptyState } from "@/components/empty-state";
 import { Input } from "@/components/ui/input";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Skeleton } from "@/components/ui/skeleton";
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { EmptyState } from "@/components/empty-state";
 import { MeetingStatus } from "@/components/meeting-status";
+import { StatsStrip } from "@/components/stats-strip";
 import { UploadSection } from "@/components/upload-section";
 import {
   listMeetings,
@@ -27,6 +33,7 @@ import {
   type Meeting,
   type SeriesWithCount,
 } from "@/lib/api";
+import { cn } from "@/lib/utils";
 import { dirOf } from "@/lib/rtl";
 
 const RELATIVE_FA = new Intl.RelativeTimeFormat("fa-IR", { numeric: "auto" });
@@ -49,14 +56,12 @@ function relativeFa(iso: string): string {
 function formatDuration(seconds: number | null): string | null {
   if (seconds == null) return null;
   const total = Math.max(0, Math.round(seconds));
-  const mm = Math.floor(total / 60)
-    .toString()
-    .padStart(2, "0");
+  const mm = Math.floor(total / 60).toString().padStart(2, "0");
   const ss = (total % 60).toString().padStart(2, "0");
   return `${mm}:${ss}`;
 }
 
-function MeetingCard({
+function MeetingRow({
   meeting,
   series,
 }: {
@@ -70,51 +75,52 @@ function MeetingCard({
       href={`/meetings/${meeting.id}`}
       className="group block rounded-xl outline-none focus-visible:ring-3 focus-visible:ring-ring/40"
     >
-      <Card className="transition-all group-hover:-translate-y-px group-hover:border-foreground/20 group-hover:shadow-sm">
-        <CardContent className="space-y-3">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0 flex-1 space-y-1.5">
-              <h3
-                dir={dirOf(label)}
-                className="truncate text-base font-semibold leading-6 tracking-tight"
-              >
-                {label}
-              </h3>
-              <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-                <span className="inline-flex items-center gap-1">
-                  <Calendar className="size-3.5" />
-                  <span>{relativeFa(meeting.created_at)}</span>
-                </span>
-                {duration && (
-                  <span className="inline-flex items-center gap-1 font-mono tabular-nums">
-                    <Clock className="size-3.5" />
-                    <span>{duration}</span>
-                  </span>
-                )}
-              </div>
-            </div>
+      <article className="grid grid-cols-[1fr_auto] items-center gap-3 rounded-xl border border-line bg-surface px-4 py-3.5 transition-all group-hover:-translate-y-px group-hover:border-ink-4 group-hover:shadow-card">
+        <div className="min-w-0">
+          <div className="mb-1.5 flex items-center gap-2">
+            <h3
+              dir={dirOf(label)}
+              className="truncate text-[14.5px] font-semibold leading-tight text-ink"
+            >
+              {label}
+            </h3>
             <MeetingStatus
               meetingId={meeting.id}
               initialStatus={meeting.status}
             />
           </div>
-          {series && (
-            <div className="flex items-center gap-1.5 text-xs">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11.5px] text-ink-3">
+            {series && (
               <span
-                className="size-1.5 rounded-full bg-primary"
-                aria-hidden="true"
-              />
-              <span
-                className="inline-flex items-center gap-1 truncate text-muted-foreground"
+                className="inline-flex items-center gap-1.5"
                 dir={dirOf(series.name)}
               >
-                <Layers className="size-3" />
+                <span
+                  className="size-[5px] rounded-full bg-brand"
+                  aria-hidden="true"
+                />
                 <span className="truncate">{series.name}</span>
               </span>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+            )}
+            {duration && (
+              <span className="inline-flex items-center gap-1 font-mono tabular-nums">
+                <Clock className="size-3" />
+                <span>{duration}</span>
+              </span>
+            )}
+            {meeting.num_speakers != null && (
+              <span className="inline-flex items-center gap-1">
+                <Users className="size-3" />
+                <span>{meeting.num_speakers.toLocaleString("fa-IR")} نفر</span>
+              </span>
+            )}
+            <span className="inline-flex items-center gap-1">
+              <Calendar className="size-3" />
+              <span>{relativeFa(meeting.created_at)}</span>
+            </span>
+          </div>
+        </div>
+      </article>
     </Link>
   );
 }
@@ -151,112 +157,141 @@ function MeetingsList() {
   });
 
   const filtersActive = !!(seriesId || tagIds.length > 0 || q.trim());
+  const count = data?.length ?? 0;
+
+  function clearFilters() {
+    setSeriesId(null);
+    setTagIds([]);
+    setQ("");
+  }
 
   return (
-    <div className="space-y-4">
-      <div
-        className="flex flex-wrap items-end gap-3 rounded-lg border border-border bg-card/40 p-3"
-        dir="rtl"
-      >
-        <div className="min-w-44 space-y-1">
-          <label className="text-[11px] font-medium text-muted-foreground">
-            سری
-          </label>
-          <Select
-            value={seriesId ?? ""}
-            onValueChange={(v) => setSeriesId((v as string) || null)}
-          >
-            <SelectTrigger className="h-9">
-              <SelectValue
-                placeholder="— همه —"
-                children={
-                  seriesId && seriesById[seriesId]
-                    ? seriesById[seriesId].name
-                    : undefined
-                }
-              />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="">— همه —</SelectItem>
-              {(seriesList ?? []).map((s) => (
-                <SelectItem key={s.id} value={s.id}>
-                  {s.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-1">
-          <label className="text-[11px] font-medium text-muted-foreground">
-            جستجو
-          </label>
-          <Input
-            dir="auto"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="عنوان جلسه…"
-            className="h-9 w-48"
-          />
-        </div>
-        <div className="flex-1 space-y-1">
-          <label className="text-[11px] font-medium text-muted-foreground">
-            برچسب‌ها
-          </label>
-          <div className="flex min-h-9 flex-wrap items-center gap-1.5">
-            {(tagsList ?? []).length === 0 ? (
-              <span className="text-[11px] text-muted-foreground">—</span>
-            ) : (
-              (tagsList ?? []).map((t) => {
-                const active = tagIds.includes(t.id);
-                return (
-                  <Badge
-                    key={t.id}
-                    variant={active ? "default" : "outline"}
-                    className="cursor-pointer transition-colors"
-                    onClick={() =>
-                      setTagIds((prev) =>
-                        prev.includes(t.id)
-                          ? prev.filter((x) => x !== t.id)
-                          : [...prev, t.id],
-                      )
-                    }
-                    dir={dirOf(t.name)}
-                  >
-                    {t.name}
-                  </Badge>
-                );
-              })
-            )}
-          </div>
-        </div>
-        {filtersActive && (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              setSeriesId(null);
-              setTagIds([]);
-              setQ("");
-            }}
-          >
-            <X className="size-3.5" />
-            <span>پاک‌سازی</span>
-          </Button>
+    <section className="mt-7" dir="rtl">
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <h2 className="text-[17px] font-semibold tracking-tight text-ink">
+          جلسات اخیر
+        </h2>
+        {!isLoading && (
+          <span className="text-xs text-ink-4">
+            {count.toLocaleString("fa-IR")} جلسه
+          </span>
         )}
+        <div className="ms-auto flex items-center gap-2">
+          <div className="relative">
+            <Search className="pointer-events-none absolute end-2.5 top-1/2 size-3.5 -translate-y-1/2 text-ink-4" />
+            <Input
+              dir="auto"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="جستجو در عناوین…"
+              className="h-8 w-56 border-line bg-surface pe-8 text-xs"
+            />
+          </div>
+          <Popover>
+            <PopoverTrigger
+              render={
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className={cn(
+                    "h-8 border-line text-xs",
+                    (tagIds.length > 0 || seriesId) &&
+                      "border-brand text-brand",
+                  )}
+                >
+                  <Filter className="size-3.5" />
+                  فیلتر
+                  {(tagIds.length > 0 || seriesId) && (
+                    <span className="font-mono tabular-nums">
+                      {(tagIds.length + (seriesId ? 1 : 0)).toLocaleString(
+                        "fa-IR",
+                      )}
+                    </span>
+                  )}
+                </Button>
+              }
+            />
+            <PopoverContent align="end" className="w-72 space-y-3">
+              <div className="space-y-1.5">
+                <p className="text-[11px] font-medium text-ink-3">برچسب‌ها</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {(tagsList ?? []).length === 0 ? (
+                    <span className="text-[11px] text-ink-4">—</span>
+                  ) : (
+                    (tagsList ?? []).map((t) => {
+                      const active = tagIds.includes(t.id);
+                      return (
+                        <Badge
+                          key={t.id}
+                          variant={active ? "default" : "outline"}
+                          className="cursor-pointer transition-colors"
+                          onClick={() =>
+                            setTagIds((prev) =>
+                              prev.includes(t.id)
+                                ? prev.filter((x) => x !== t.id)
+                                : [...prev, t.id],
+                            )
+                          }
+                          dir={dirOf(t.name)}
+                        >
+                          {t.name}
+                        </Badge>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+              {filtersActive && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={clearFilters}
+                  className="w-full"
+                >
+                  <X className="size-3.5" />
+                  پاک‌سازی فیلترها
+                </Button>
+              )}
+            </PopoverContent>
+          </Popover>
+        </div>
       </div>
 
+      {(seriesList ?? []).length > 0 && (
+        <div
+          className="mb-4 -mx-1 flex gap-1.5 overflow-x-auto scrollbar-none px-1"
+          role="tablist"
+        >
+          <SeriesChip
+            label="همه"
+            active={seriesId === null}
+            onClick={() => setSeriesId(null)}
+          />
+          {(seriesList ?? []).map((s) => (
+            <SeriesChip
+              key={s.id}
+              label={s.name}
+              count={s.meeting_count}
+              active={seriesId === s.id}
+              onClick={() => setSeriesId(seriesId === s.id ? null : s.id)}
+            />
+          ))}
+        </div>
+      )}
+
       {isLoading ? (
-        <div className="grid gap-3">
+        <div className="grid gap-2">
           {[0, 1, 2].map((i) => (
-            <Skeleton key={i} className="h-24 w-full" />
+            <div
+              key={i}
+              className="h-[78px] rounded-xl border border-line-soft bg-bg-soft animate-shimmer"
+            />
           ))}
         </div>
       ) : isError ? (
-        <Card>
-          <CardContent className="py-6 text-center text-sm text-destructive">
-            خطا در بارگذاری فهرست جلسات
-          </CardContent>
-        </Card>
+        <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-5 text-center text-sm text-destructive">
+          خطا در بارگذاری فهرست جلسات
+        </div>
       ) : !data || data.length === 0 ? (
         filtersActive ? (
           <EmptyState
@@ -272,38 +307,74 @@ function MeetingsList() {
           />
         )
       ) : (
-        <div className="grid gap-3">
+        <div className="grid gap-2">
           {data.map((m) => (
-            <MeetingCard
+            <MeetingRow
               key={m.id}
               meeting={m}
-              series={
-                m.series_id ? seriesById[m.series_id] : undefined
-              }
+              series={m.series_id ? seriesById[m.series_id] : undefined}
             />
           ))}
         </div>
       )}
-    </div>
+    </section>
+  );
+}
+
+function SeriesChip({
+  label,
+  count,
+  active,
+  onClick,
+}: {
+  label: string;
+  count?: number;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full border px-3 text-xs transition-all",
+        active
+          ? "border-ink bg-ink text-white"
+          : "border-line bg-surface text-ink-2 hover:border-ink-4",
+      )}
+      dir={dirOf(label)}
+    >
+      <span>{label}</span>
+      {count != null && (
+        <span
+          className={cn(
+            "rounded-full px-1.5 text-[10px] font-mono tabular-nums",
+            active ? "bg-white/20 text-white" : "bg-bg-soft text-ink-4",
+          )}
+        >
+          {count.toLocaleString("fa-IR")}
+        </span>
+      )}
+    </button>
   );
 }
 
 export default function HomePage() {
   return (
-    <main className="mx-auto max-w-6xl space-y-8 px-6 py-8">
-      <header className="space-y-1">
-        <h1 className="text-3xl font-bold tracking-tight">جلسات شما</h1>
-        <p className="text-sm text-muted-foreground">
+    <main className="mx-auto max-w-6xl px-6 py-8" dir="rtl">
+      <header>
+        <h1 className="text-[28px] font-bold tracking-tight text-ink">
+          جلسات شما
+        </h1>
+        <p className="mt-1.5 text-[13.5px] text-ink-3">
           رونویسی و خلاصه‌سازی هوشمند جلسات فارسی.
         </p>
       </header>
-      <UploadSection />
-      <section className="space-y-3">
-        <div className="flex items-end justify-between">
-          <h2 className="text-lg font-semibold tracking-tight">جلسات اخیر</h2>
-        </div>
-        <MeetingsList />
-      </section>
+      <StatsStrip />
+      <div className="mt-7">
+        <UploadSection />
+      </div>
+      <MeetingsList />
     </main>
   );
 }

@@ -22,11 +22,15 @@ async def suggest_series(
     session: AsyncSession,
     title: str | None,
     *,
+    owner_id: str | None = None,
     threshold: float = DEFAULT_THRESHOLD,
 ) -> SeriesSuggestion | None:
     if not title or not title.strip():
         return None
-    rows = (await session.execute(select(Series.id, Series.name))).all()
+    stmt = select(Series.id, Series.name)
+    if owner_id is not None:
+        stmt = stmt.where(Series.owner_id == owner_id)
+    rows = (await session.execute(stmt)).all()
     if not rows:
         return None
     name_to_id = {name: sid for sid, name in rows}

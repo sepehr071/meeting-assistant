@@ -8,6 +8,24 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.models import EmailTone, KeytermSource, MeetingStatus
 
 
+class UserRegister(BaseModel):
+    username: str = Field(min_length=3, max_length=80)
+    password: str = Field(min_length=8, max_length=200)
+
+
+class UserLogin(BaseModel):
+    username: str
+    password: str
+
+
+class UserRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    username: str
+    created_at: datetime
+
+
 class MeetingCreate(BaseModel):
     title: str | None = None
     num_speakers: int | None = None
@@ -190,3 +208,13 @@ class ChatMessageRead(BaseModel):
 
 class ChatAskBody(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
+
+
+class StatsRead(BaseModel):
+    days: int
+    meetings: int
+    meetings_delta: int
+    duration_s: int
+    duration_delta_s: int
+    actions: int
+    decisions: int

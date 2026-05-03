@@ -75,29 +75,41 @@ frontend/
 ## Run
 
 ```bash
-# 1. backend (port 8000)
+# 1. backend (defaults to :8000)
 cd backend
-uv run alembic upgrade head     # apply migrations after pulling
-uv run uvicorn app.main:app --port 8000
+cp .env.example .env  # first time only
+uv run alembic upgrade head           # apply migrations after pulling
+uv run uvicorn app.main:app --host "${HOST:-0.0.0.0}" --port "${PORT:-8000}"
 
-# 2. frontend (port 3000)
+# 2. frontend (defaults to :3000)
 cd frontend
-pnpm dev
+cp .env.example .env.local  # first time only
+pnpm dev                              # respects PORT env automatically
 ```
 
-`.env` (in `backend/`):
+### Running on different ports (Linux server with other apps)
 
+When the default ports collide with other services, set per-process env vars:
+
+```bash
+# backend on :8001
+cd backend
+PORT=8001 uv run uvicorn app.main:app --host 0.0.0.0 --port "$PORT"
+
+# frontend on :3001 — ALSO update its API_BASE and the backend's CORS
+cd frontend
+PORT=3001 NEXT_PUBLIC_API_BASE=http://localhost:8001/api pnpm dev
+# and in backend/.env: ALLOWED_ORIGIN=http://localhost:3001
 ```
-ELEVENLABS_API_KEY=...   # needs scribe_v2 + scribe_v2_realtime + single-use-token
-OPENROUTER_API_KEY=...
-OPENROUTER_MODEL=google/gemini-3-flash-preview
-OPENROUTER_REFERER=http://localhost:3000
-OPENROUTER_TITLE=Meeting Assistant
-STORAGE_DIR=./storage
-DATABASE_URL=sqlite+aiosqlite:///./meeting.db
-ALLOWED_ORIGIN=http://localhost:3000
-# ALLOWED_ORIGIN_REGEX=^http://localhost:3000$  # only set to override the default
-```
+
+Same-host cross-port is same-site → `SESSION_SAME_SITE=lax` works as-is. For cross-host (different domains) set `SESSION_SAME_SITE=none` + `SESSION_COOKIE_SECURE=true` (requires HTTPS).
+
+Env files (templates in `backend/.env.example` and `frontend/.env.example`):
+
+- `backend/.env`: `ELEVENLABS_API_KEY`, `OPENROUTER_API_KEY`, `SESSION_SECRET`, `ALLOWED_ORIGIN`, `SESSION_SAME_SITE`, `SESSION_COOKIE_SECURE`, `STORAGE_DIR`, `DATABASE_URL`, optional `ALLOWED_ORIGIN_REGEX`.
+- `frontend/.env.local`: `NEXT_PUBLIC_API_BASE`, `PORT`.
+
+`ALLOWED_ORIGIN` accepts a comma-separated list (e.g. `http://localhost:3001,http://192.168.1.10:3001`). Use `ALLOWED_ORIGIN_REGEX` only when an exact list won't fit.
 
 ## Tests
 

@@ -3,10 +3,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, FileText, Gavel } from "lucide-react";
 
-import { Card, CardContent } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/empty-state";
+import { PanelHeader } from "@/components/panel-header";
 import { getSummary, type SummaryRead } from "@/lib/api";
+import { dirOf } from "@/lib/rtl";
 
 interface DecisionsViewProps {
   meetingId: string;
@@ -25,18 +25,19 @@ export function DecisionsView({ meetingId }: DecisionsViewProps) {
 
   if (isLoading) {
     return (
-      <div className="space-y-2">
-        <Skeleton className="h-12 w-full" />
-        <Skeleton className="h-12 w-full" />
-      </div>
+      <>
+        <PanelHeader kicker="تصمیم‌ها" title="…" />
+        <div className="space-y-3">
+          <div className="h-20 rounded-xl animate-shimmer" />
+          <div className="h-20 rounded-xl animate-shimmer" />
+        </div>
+      </>
     );
   }
 
   if (isError) {
     if (isNotFound(error)) {
-      return (
-        <EmptyState icon={FileText} title="خلاصه هنوز آماده نیست" />
-      );
+      return <EmptyState icon={FileText} title="خلاصه هنوز آماده نیست" />;
     }
     return (
       <EmptyState
@@ -51,28 +52,49 @@ export function DecisionsView({ meetingId }: DecisionsViewProps) {
 
   if (data.decisions.length === 0) {
     return (
-      <EmptyState
-        icon={Gavel}
-        title="تصمیمی استخراج نشد"
-        hint="هیچ تصمیم قطعی در این جلسه شناسایی نشد."
-      />
+      <>
+        <PanelHeader kicker="تصمیم‌ها" title="تصمیمی استخراج نشد" />
+        <EmptyState
+          icon={Gavel}
+          title="تصمیمی استخراج نشد"
+          hint="هیچ تصمیم قطعی در این جلسه شناسایی نشد."
+        />
+      </>
     );
   }
 
   return (
-    <Card>
-      <CardContent>
-        <ol dir="rtl" className="space-y-3 text-sm leading-7">
-          {data.decisions.map((decision, idx) => (
-            <li key={idx} className="flex gap-3">
-              <span className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-full bg-primary/10 text-xs font-semibold text-primary tabular-nums">
-                {idx + 1}
-              </span>
-              <span className="flex-1">{decision}</span>
-            </li>
-          ))}
-        </ol>
-      </CardContent>
-    </Card>
+    <>
+      <PanelHeader
+        kicker="تصمیم‌ها"
+        title={`${data.decisions.length.toLocaleString(
+          "fa-IR",
+        )} نقطه عطف در این جلسه`}
+      />
+      <div className="flex flex-col gap-3.5">
+        {data.decisions.map((d, i) => (
+          <article
+            key={i}
+            className="grid grid-cols-[32px_1fr] gap-4 rounded-2xl border border-line bg-surface px-6 py-5"
+          >
+            <span
+              className="grid size-7 place-items-center rounded-full text-xs font-bold text-white font-mono tabular-nums"
+              style={{
+                background:
+                  "linear-gradient(135deg, var(--brand) 0%, var(--brand-2) 100%)",
+              }}
+            >
+              {(i + 1).toLocaleString("fa-IR")}
+            </span>
+            <p
+              dir={dirOf(d)}
+              className="text-base font-medium leading-7 tracking-tight text-ink"
+            >
+              {d}
+            </p>
+          </article>
+        ))}
+      </div>
+    </>
   );
 }

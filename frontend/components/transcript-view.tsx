@@ -3,9 +3,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, FileText, ScrollText } from "lucide-react";
 
-import { Card, CardContent } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/empty-state";
+import { PanelHeader } from "@/components/panel-header";
 import { getTranscript, type TranscriptRead } from "@/lib/api";
 
 interface TranscriptViewProps {
@@ -25,14 +24,15 @@ export function TranscriptView({ meetingId }: TranscriptViewProps) {
 
   if (isLoading) {
     return (
-      <Card>
-        <CardContent className="space-y-2 py-5">
-          <Skeleton className="h-4 w-full" />
-          <Skeleton className="h-4 w-5/6" />
-          <Skeleton className="h-4 w-4/5" />
-          <Skeleton className="h-4 w-3/5" />
-        </CardContent>
-      </Card>
+      <>
+        <PanelHeader kicker="رونوشت" title="…" />
+        <div className="space-y-2">
+          <div className="h-5 w-full rounded animate-shimmer" />
+          <div className="h-5 w-5/6 rounded animate-shimmer" />
+          <div className="h-5 w-4/5 rounded animate-shimmer" />
+          <div className="h-5 w-3/5 rounded animate-shimmer" />
+        </div>
+      </>
     );
   }
 
@@ -54,16 +54,23 @@ export function TranscriptView({ meetingId }: TranscriptViewProps) {
     return <EmptyState icon={ScrollText} title="رونوشت خالی است" />;
   }
 
+  const wordCount = data.plain_text.trim().split(/\s+/).length;
+
   return (
-    <Card>
-      <CardContent>
-        <div
+    <>
+      <PanelHeader
+        kicker="رونوشت"
+        title="رونوشت کامل با گویندگان"
+        subtitle={`${wordCount.toLocaleString("fa-IR")} کلمه`}
+      />
+      <div className="rounded-2xl border border-line bg-surface p-6">
+        <pre
           dir="rtl"
-          className="text-sm leading-8 whitespace-pre-wrap text-foreground/90"
+          className="whitespace-pre-wrap font-sans text-[14px] leading-[2.1] text-ink"
         >
           {data.plain_text}
-        </div>
-      </CardContent>
-    </Card>
+        </pre>
+      </div>
+    </>
   );
 }

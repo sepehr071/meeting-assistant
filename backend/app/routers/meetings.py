@@ -21,8 +21,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from sqlalchemy import delete
 
+from app.auth import get_current_user
 from app.db import get_session
-from app.models import Meeting, MeetingStatus, MeetingTag, Series, Speaker, Summary, Tag, Transcript
+from app.models import Meeting, MeetingStatus, MeetingTag, Series, Speaker, Summary, Tag, Transcript, User
 from app.schemas import (
     ActionItem,
     EmailDraft,
@@ -76,13 +77,26 @@ def _meeting_detail(
     )
 
 
+async def _get_owned_meeting(
+    session: AsyncSession, meeting_id: str, user: User
+) -> Meeting:
+    """Fetch a meeting and verify it belongs to the current user. 404 on miss
+    to avoid leaking existence of other users' rows."""
+    meeting = await session.get(Meeting, meeting_id)
+    if meeting is None or meeting.owner_id != user.id:
+        raise HTTPException(status_code=404, detail="meeting not found")
+    return meeting
+
+
 async def _resolve_tags(
-    session: AsyncSession, tag_ids: list[str]
+    session: AsyncSession, tag_ids: list[str], owner_id: str
 ) -> list[Tag]:
     if not tag_ids:
         return []
     rows = (
-        await session.execute(select(Tag).where(Tag.id.in_(tag_ids)))
+        await session.execute(
+            select(Tag).where(Tag.id.in_(tag_ids), Tag.owner_id == owner_id)
+        )
     ).scalars().all()
     return list(rows)
 
@@ -97,11 +111,13 @@ async def _set_meeting_tags(
         session.add(MeetingTag(meeting_id=meeting_id, tag_id=tid))
 
 
-async def _resolve_series(session: AsyncSession, series_id: str | None) -> Series | None:
+async def _resolve_series(
+    session: AsyncSession, series_id: str | None, owner_id: str
+) -> Series | None:
     if not series_id:
         return None
     s = await session.get(Series, series_id)
-    if s is None:
+    if s is None or s.owner_id != owner_id:
         raise HTTPException(status_code=400, detail="series_id does not exist")
     return s
 
@@ -150,6 +166,7 @@ async def upload_meeting(
     series_id: str | None = Form(None),
     tag_ids: list[str] = Form([]),
     session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
 ) -> MeetingRead:
     if not file.filename and not file.content_type:
         raise HTTPException(status_code=400, detail="missing file")
@@ -164,8 +181,8 @@ async def upload_meeting(
     if num_speakers is not None and (num_speakers < 1 or num_speakers > 32):
         raise HTTPException(status_code=400, detail="num_speakers must be 1-32")
 
-    series = await _resolve_series(session, series_id)
-    valid_tag_ids = [t.id for t in await _resolve_tags(session, tag_ids)]
+    series = await _resolve_series(session, series_id, user.id)
+    valid_tag_ids = [t.id for t in await _resolve_tags(session, tag_ids, user.id)]
 
     meeting_id = str(uuid.uuid4())
     audio_path, original_filename, _ = await _save_upload_with_size_check(file, meeting_id)
@@ -182,6 +199,7 @@ async def upload_meeting(
         num_speakers=num_speakers,
         meeting_brief=(meeting_brief.strip() if meeting_brief else None) or None,
         series_id=series.id if series else None,
+        owner_id=user.id,
     )
     session.add(meeting)
     await session.flush()
@@ -199,8 +217,9 @@ async def upload_meeting(
 async def suggest_series_endpoint(
     title: str = "",
     session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
 ) -> SeriesSuggestionRead | None:
-    suggestion = await series_match.suggest_series(session, title)
+    suggestion = await series_match.suggest_series(session, title, owner_id=user.id)
     if suggestion is None:
         return None
     return SeriesSuggestionRead(
@@ -216,8 +235,13 @@ async def list_meetings(
     tag_ids: list[str] | None = Query(None),
     q: str | None = Query(None),
     session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
 ) -> list[MeetingRead]:
-    stmt = select(Meeting).order_by(Meeting.created_at.desc())
+    stmt = (
+        select(Meeting)
+        .where(Meeting.owner_id == user.id)
+        .order_by(Meeting.created_at.desc())
+    )
     if series_id:
         stmt = stmt.where(Meeting.series_id == series_id)
     if q:
@@ -261,10 +285,12 @@ async def _load_meeting_assoc(
 
 
 @router.get("/{meeting_id}", response_model=MeetingDetail)
-async def get_meeting(meeting_id: str, session: AsyncSession = Depends(get_session)) -> MeetingDetail:
-    meeting = await session.get(Meeting, meeting_id)
-    if meeting is None:
-        raise HTTPException(status_code=404, detail="meeting not found")
+async def get_meeting(
+    meeting_id: str,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> MeetingDetail:
+    meeting = await _get_owned_meeting(session, meeting_id, user)
 
     speakers = await _meeting_speakers(session, meeting_id)
     latest_id = await _latest_summary_id(session, meeting_id)
@@ -277,10 +303,9 @@ async def patch_meeting(
     meeting_id: str,
     body: MeetingPatch,
     session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
 ) -> MeetingDetail:
-    meeting = await session.get(Meeting, meeting_id)
-    if meeting is None:
-        raise HTTPException(status_code=404, detail="meeting not found")
+    meeting = await _get_owned_meeting(session, meeting_id, user)
 
     if body.title is not None:
         meeting.title = body.title.strip() or None
@@ -289,11 +314,11 @@ async def patch_meeting(
         if body.series_id == "":
             meeting.series_id = None
         else:
-            series = await _resolve_series(session, body.series_id)
+            series = await _resolve_series(session, body.series_id, user.id)
             meeting.series_id = series.id if series else None
 
     if body.tag_ids is not None:
-        valid_tag_ids = [t.id for t in await _resolve_tags(session, body.tag_ids)]
+        valid_tag_ids = [t.id for t in await _resolve_tags(session, body.tag_ids, user.id)]
         await _set_meeting_tags(session, meeting_id, valid_tag_ids)
 
     await session.commit()
@@ -308,7 +333,12 @@ async def patch_meeting(
 
 
 @router.get("/{meeting_id}/transcript", response_model=TranscriptRead)
-async def get_transcript(meeting_id: str, session: AsyncSession = Depends(get_session)) -> TranscriptRead:
+async def get_transcript(
+    meeting_id: str,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> TranscriptRead:
+    await _get_owned_meeting(session, meeting_id, user)
     transcript = await session.get(Transcript, meeting_id)
     if transcript is None:
         raise HTTPException(status_code=404, detail="transcript not found")
@@ -361,10 +391,12 @@ def _coerce_open_questions(raw: list[Any] | None) -> list[OpenQuestion]:
 
 
 @router.get("/{meeting_id}/summary", response_model=SummaryRead)
-async def get_summary(meeting_id: str, session: AsyncSession = Depends(get_session)) -> SummaryRead:
-    meeting = await session.get(Meeting, meeting_id)
-    if meeting is None:
-        raise HTTPException(status_code=404, detail="meeting not found")
+async def get_summary(
+    meeting_id: str,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> SummaryRead:
+    await _get_owned_meeting(session, meeting_id, user)
 
     row = await session.execute(
         select(Summary)
@@ -409,10 +441,9 @@ async def rename_speaker(
     speaker_id: str,
     body: SpeakerRename,
     session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
 ) -> SpeakerRead:
-    meeting = await session.get(Meeting, meeting_id)
-    if meeting is None:
-        raise HTTPException(status_code=404, detail="meeting not found")
+    meeting = await _get_owned_meeting(session, meeting_id, user)
 
     speaker = await session.get(Speaker, {"meeting_id": meeting_id, "speaker_id": speaker_id})
     if speaker is None:
@@ -441,14 +472,13 @@ async def rename_speaker(
 async def cancel_meeting(
     meeting_id: str,
     session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
 ) -> dict[str, Any]:
     """Stop an in-flight pipeline. Best-effort: we flip status synchronously
     and signal the running task; in-progress Scribe/OpenRouter HTTP calls
     can't be torn down mid-flight but their results are discarded.
     """
-    meeting = await session.get(Meeting, meeting_id)
-    if meeting is None:
-        raise HTTPException(status_code=404, detail="meeting not found")
+    meeting = await _get_owned_meeting(session, meeting_id, user)
 
     in_flight = {
         MeetingStatus.UPLOADED,
@@ -474,10 +504,9 @@ async def regenerate(
     meeting_id: str,
     background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
 ) -> dict[str, Any]:
-    meeting = await session.get(Meeting, meeting_id)
-    if meeting is None:
-        raise HTTPException(status_code=404, detail="meeting not found")
+    meeting = await _get_owned_meeting(session, meeting_id, user)
 
     transcript = await session.get(Transcript, meeting_id)
     if transcript is None:
@@ -494,12 +523,15 @@ async def regenerate(
 
 
 @router.get("/{meeting_id}/summary/stream")
-async def stream_summary(meeting_id: str) -> StreamingResponse:
+async def stream_summary(
+    meeting_id: str,
+    user: User = Depends(get_current_user),
+) -> StreamingResponse:
     from app.db import SessionLocal
 
     async with SessionLocal() as session:
         meeting = await session.get(Meeting, meeting_id)
-        if meeting is None:
+        if meeting is None or meeting.owner_id != user.id:
             raise HTTPException(status_code=404, detail="meeting not found")
         transcript = await session.get(Transcript, meeting_id)
         if transcript is None:

@@ -13,15 +13,14 @@ import {
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { EmptyState } from "@/components/empty-state";
 import { Input } from "@/components/ui/input";
+import { PanelHeader } from "@/components/panel-header";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { Skeleton } from "@/components/ui/skeleton";
 import {
   getMeeting,
   getSummary,
@@ -30,8 +29,17 @@ import {
   type MeetingDetail,
   type SummaryRead,
 } from "@/lib/api";
-import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
 import { dirOf } from "@/lib/rtl";
+
+const SPEAKER_COLORS = [
+  "oklch(0.55 0.16 270)",
+  "oklch(0.66 0.13 200)",
+  "oklch(0.62 0.14 155)",
+  "oklch(0.78 0.13 80)",
+  "oklch(0.6 0.22 25)",
+  "oklch(0.55 0.14 320)",
+];
 
 interface MinutesViewProps {
   meetingId: string;
@@ -39,9 +47,7 @@ interface MinutesViewProps {
 
 function formatTime(seconds: number): string {
   const total = Math.max(0, Math.round(seconds));
-  const mm = Math.floor(total / 60)
-    .toString()
-    .padStart(2, "0");
+  const mm = Math.floor(total / 60).toString().padStart(2, "0");
   const ss = (total % 60).toString().padStart(2, "0");
   return `${mm}:${ss}`;
 }
@@ -50,14 +56,26 @@ function isNotFound(err: unknown): boolean {
   return err instanceof Error && err.message.startsWith("404 ");
 }
 
+function colorFor(speakerId: string, allIds: string[]): string {
+  const i = allIds.indexOf(speakerId);
+  return SPEAKER_COLORS[(i < 0 ? 0 : i) % SPEAKER_COLORS.length];
+}
+
 interface SpeakerChipProps {
   meetingId: string;
   speakerId: string;
   alias: string | null;
   seriesId: string | null;
+  color: string;
 }
 
-function SpeakerChip({ meetingId, speakerId, alias, seriesId }: SpeakerChipProps) {
+function SpeakerChip({
+  meetingId,
+  speakerId,
+  alias,
+  seriesId,
+  color,
+}: SpeakerChipProps) {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(alias ?? "");
@@ -87,6 +105,7 @@ function SpeakerChip({ meetingId, speakerId, alias, seriesId }: SpeakerChipProps
   });
 
   const display = alias ?? speakerId;
+  const initial = display[0] ?? "?";
 
   return (
     <Popover
@@ -100,18 +119,23 @@ function SpeakerChip({ meetingId, speakerId, alias, seriesId }: SpeakerChipProps
         render={
           <button
             type="button"
-            className="inline-flex shrink-0 items-center gap-1 rounded-full bg-secondary px-2.5 py-0.5 text-xs font-medium text-secondary-foreground hover:bg-secondary/80"
+            className="group inline-flex shrink-0 items-center gap-1.5 rounded-full bg-bg-soft px-2 py-0.5 text-[12px] font-medium text-ink-2 transition-colors hover:bg-line-soft"
           >
-            <span>{display}</span>
-            <Pencil className="size-3 opacity-60" />
+            <span
+              className="grid size-5 place-items-center rounded-full text-[10px] font-bold text-white"
+              style={{ background: color }}
+              aria-hidden="true"
+            >
+              {initial}
+            </span>
+            <span dir={dirOf(display)}>{display}</span>
+            <Pencil className="size-2.5 text-ink-4 opacity-0 transition-opacity group-hover:opacity-100" />
           </button>
         }
       />
       <PopoverContent align="start" className="w-64">
         <div className="space-y-2" dir="rtl">
-          <label className="text-xs font-medium text-muted-foreground">
-            نام گوینده
-          </label>
+          <label className="text-xs font-medium text-ink-3">نام گوینده</label>
           <Input
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
@@ -125,20 +149,18 @@ function SpeakerChip({ meetingId, speakerId, alias, seriesId }: SpeakerChipProps
           />
           {seriesId && (knownNamesQ.data ?? []).length > 0 && (
             <div className="space-y-1">
-              <p className="text-xs text-muted-foreground">
-                از این سری
-              </p>
+              <p className="text-xs text-ink-3">از این سری</p>
               <div className="flex flex-wrap gap-1">
                 {(knownNamesQ.data ?? []).map((name) => (
-                  <Badge
+                  <button
                     key={name}
-                    variant="outline"
-                    className="cursor-pointer"
+                    type="button"
+                    className="rounded-full border border-line px-2 py-0.5 text-[11px] text-ink-2 hover:border-brand hover:text-brand"
                     onClick={() => setDraft(name)}
                     dir={dirOf(name)}
                   >
                     {name}
-                  </Badge>
+                  </button>
                 ))}
               </div>
             </div>
@@ -207,11 +229,13 @@ export function MinutesView({ meetingId }: MinutesViewProps) {
 
   if (summaryQ.isLoading || meetingQ.isLoading) {
     return (
-      <div className="space-y-2">
-        <Skeleton className="h-14 w-full" />
-        <Skeleton className="h-14 w-full" />
-        <Skeleton className="h-14 w-full" />
-      </div>
+      <>
+        <PanelHeader kicker="صورتجلسه" title="…" />
+        <div className="space-y-2">
+          <div className="h-14 rounded animate-shimmer" />
+          <div className="h-14 rounded animate-shimmer" />
+        </div>
+      </>
     );
   }
 
@@ -232,11 +256,14 @@ export function MinutesView({ meetingId }: MinutesViewProps) {
 
   if (summaryQ.data.minutes.length === 0) {
     return (
-      <EmptyState
-        icon={ListTree}
-        title="صورتجلسه‌ای استخراج نشد"
-        hint="رونوشت کوتاه‌تر از آن بود که بخش‌بندی شود."
-      />
+      <>
+        <PanelHeader kicker="صورتجلسه" title="صورتجلسه‌ای استخراج نشد" />
+        <EmptyState
+          icon={ListTree}
+          title="صورتجلسه‌ای استخراج نشد"
+          hint="رونوشت کوتاه‌تر از آن بود که بخش‌بندی شود."
+        />
+      </>
     );
   }
 
@@ -258,51 +285,68 @@ export function MinutesView({ meetingId }: MinutesViewProps) {
   }
 
   return (
-    <div className="space-y-3">
+    <>
+      <PanelHeader
+        kicker="صورتجلسه"
+        title="صورتجلسه رسمی"
+        subtitle={`${total.toLocaleString("fa-IR")} بخش`}
+      />
+
       <div
-        className="sticky top-0 z-10 space-y-2 rounded-md border bg-background/95 p-3 backdrop-blur"
+        className="sticky top-0 z-10 mb-4 space-y-2 rounded-xl border border-line bg-surface/95 p-3 backdrop-blur"
         dir="rtl"
       >
         <div className="relative">
-          <Search className="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Search className="pointer-events-none absolute end-3 top-1/2 size-4 -translate-y-1/2 text-ink-4" />
           <Input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="جستجو در متن جلسه…"
-            className="pr-9"
+            className="border-line bg-surface pe-9"
           />
         </div>
         {speakerIds.length > 0 && (
-          <div className="flex flex-wrap items-center gap-1">
+          <div className="flex flex-wrap items-center gap-1.5">
             {speakerIds.map((id) => {
               const name = aliasMap[id] ?? id;
               const active = activeSpeakers.has(id);
               return (
-                <Badge
+                <button
                   key={id}
-                  variant={active ? "default" : "outline"}
-                  className="cursor-pointer"
+                  type="button"
                   onClick={() => toggleSpeaker(id)}
+                  className={cn(
+                    "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11.5px] transition-colors",
+                    active
+                      ? "bg-ink text-white"
+                      : "border border-line bg-surface text-ink-2 hover:border-ink-4",
+                  )}
                   dir={dirOf(name)}
                 >
+                  <span
+                    className="size-1.5 rounded-full"
+                    style={{ background: colorFor(id, speakerIds) }}
+                  />
                   {name}
-                </Badge>
+                </button>
               );
             })}
           </div>
         )}
-        <div className="flex items-center justify-between text-xs text-muted-foreground">
+        <div className="flex items-center justify-between text-xs text-ink-4">
           <span>
-            {filtersActive ? `${filtered.length} از ${total} بخش` : `${total} بخش`}
+            {filtersActive
+              ? `${filtered.length} از ${total} بخش`
+              : `${total} بخش`}
           </span>
           {filtersActive && (
             <button
               type="button"
               onClick={clearFilters}
-              className="inline-flex items-center gap-1 text-primary hover:underline"
+              className="inline-flex items-center gap-1 text-brand hover:underline"
             >
               <X className="size-3" />
-              <span>پاک کردن فیلترها</span>
+              پاک کردن فیلترها
             </button>
           )}
         </div>
@@ -317,35 +361,34 @@ export function MinutesView({ meetingId }: MinutesViewProps) {
       ) : (
         <div className="space-y-2">
           {filtered.map((segment, idx) => (
-            <Card
+            <article
               key={`${segment.speaker_id}-${segment.start_s}-${idx}`}
-              size="sm"
+              className="flex items-start gap-3 rounded-xl border border-line bg-surface px-4 py-3"
               style={{
                 contentVisibility: "auto",
                 containIntrinsicSize: "auto 88px",
               }}
             >
-              <CardContent className="flex items-start gap-3">
-                <SpeakerChip
-                  meetingId={meetingId}
-                  speakerId={segment.speaker_id}
-                  alias={aliasMap[segment.speaker_id] ?? null}
-                  seriesId={meetingQ.data?.series_id ?? null}
-                />
-                <p
-                  dir="rtl"
-                  className="flex-1 text-sm leading-7 whitespace-pre-wrap"
-                >
-                  {segment.text}
-                </p>
-                <span className="shrink-0 font-mono text-xs text-muted-foreground tabular-nums">
-                  {formatTime(segment.start_s)}–{formatTime(segment.end_s)}
-                </span>
-              </CardContent>
-            </Card>
+              <SpeakerChip
+                meetingId={meetingId}
+                speakerId={segment.speaker_id}
+                alias={aliasMap[segment.speaker_id] ?? null}
+                seriesId={meetingQ.data?.series_id ?? null}
+                color={colorFor(segment.speaker_id, speakerIds)}
+              />
+              <p
+                dir="rtl"
+                className="flex-1 whitespace-pre-wrap text-[13.5px] leading-7 text-ink-2"
+              >
+                {segment.text}
+              </p>
+              <span className="shrink-0 font-mono text-[11px] text-ink-4 tabular-nums">
+                {formatTime(segment.start_s)}
+              </span>
+            </article>
           ))}
         </div>
       )}
-    </div>
+    </>
   );
 }

@@ -37,6 +37,17 @@ class KeytermSource(str, enum.Enum):
     ACCEPTED = "accepted"
 
 
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    username: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    password_hash: Mapped[str] = mapped_column(String(500), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+
+    __table_args__ = (UniqueConstraint("username", name="uq_users_username"),)
+
+
 class Meeting(Base):
     __tablename__ = "meetings"
 
@@ -53,6 +64,9 @@ class Meeting(Base):
     meeting_brief: Mapped[str | None] = mapped_column(Text, nullable=True)
     series_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("series.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    owner_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True
     )
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
@@ -131,6 +145,9 @@ class Series(Base):
     email_tone: Mapped[EmailTone] = mapped_column(
         Enum(EmailTone, name="email_tone"), default=EmailTone.FORMAL, nullable=False
     )
+    owner_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_now, onupdate=_now, nullable=False
@@ -144,7 +161,7 @@ class Series(Base):
         back_populates="series", cascade="all, delete-orphan"
     )
 
-    __table_args__ = (UniqueConstraint("name", name="uq_series_name"),)
+    __table_args__ = (UniqueConstraint("owner_id", "name", name="uq_series_owner_name"),)
 
 
 class Tag(Base):
@@ -152,13 +169,16 @@ class Tag(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     name: Mapped[str] = mapped_column(String(80), nullable=False)
+    owner_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
 
     meetings: Mapped[list[Meeting]] = relationship(
         secondary="meeting_tags", back_populates="tags"
     )
 
-    __table_args__ = (UniqueConstraint("name", name="uq_tag_name"),)
+    __table_args__ = (UniqueConstraint("owner_id", "name", name="uq_tag_owner_name"),)
 
 
 class MeetingTag(Base):

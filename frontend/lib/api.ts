@@ -122,6 +122,52 @@ export interface TranscriptRead {
   words: Array<Record<string, unknown>>;
 }
 
+export interface Stats {
+  days: number;
+  meetings: number;
+  meetings_delta: number;
+  duration_s: number;
+  duration_delta_s: number;
+  actions: number;
+  decisions: number;
+}
+
+export const getStats = (days = 7): Promise<Stats> =>
+  request(`/stats?days=${days}`);
+
+// Auth
+
+export interface User {
+  id: string;
+  username: string;
+  created_at: string;
+}
+
+export const authMe = (): Promise<User> => request("/auth/me");
+
+export const authLogin = (
+  username: string,
+  password: string,
+): Promise<User> =>
+  request("/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  });
+
+export const authRegister = (
+  username: string,
+  password: string,
+): Promise<User> =>
+  request("/auth/register", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  });
+
+export const authLogout = (): Promise<void> =>
+  request("/auth/logout", { method: "POST" });
+
 export interface RealtimeToken {
   token: string;
   expires_at: string | null;
@@ -129,13 +175,29 @@ export interface RealtimeToken {
 }
 
 const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:8000/api";
+  process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000/api";
+
+export class UnauthorizedError extends Error {
+  constructor(message = "unauthorized") {
+    super(message);
+    this.name = "UnauthorizedError";
+  }
+}
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, init);
+  const res = await fetch(`${API_BASE}${path}`, {
+    ...init,
+    credentials: "include",
+  });
+  if (res.status === 401) {
+    throw new UnauthorizedError();
+  }
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(`${res.status} ${res.statusText}: ${text}`);
+  }
+  if (res.status === 204) {
+    return undefined as T;
   }
   return res.json() as Promise<T>;
 }
@@ -263,7 +325,10 @@ export const updateSeries = (
   });
 
 export const deleteSeries = async (id: string): Promise<void> => {
-  const res = await fetch(`${API_BASE}/series/${id}`, { method: "DELETE" });
+  const res = await fetch(`${API_BASE}/series/${id}`, {
+    method: "DELETE",
+    credentials: "include",
+  });
   if (!res.ok && res.status !== 204) {
     throw new Error(`${res.status} ${res.statusText}`);
   }
@@ -300,7 +365,7 @@ export const rejectKeyterm = async (
 ): Promise<void> => {
   const res = await fetch(
     `${API_BASE}/series/${seriesId}/keyterms/${termId}`,
-    { method: "DELETE" },
+    { method: "DELETE", credentials: "include" },
   );
   if (!res.ok && res.status !== 204) {
     throw new Error(`${res.status} ${res.statusText}`);
@@ -322,7 +387,10 @@ export const createTag = (name: string): Promise<Tag> =>
   });
 
 export const deleteTag = async (id: string): Promise<void> => {
-  const res = await fetch(`${API_BASE}/tags/${id}`, { method: "DELETE" });
+  const res = await fetch(`${API_BASE}/tags/${id}`, {
+    method: "DELETE",
+    credentials: "include",
+  });
   if (!res.ok && res.status !== 204) {
     throw new Error(`${res.status} ${res.statusText}`);
   }
@@ -333,7 +401,9 @@ export function streamSummary(
   onDelta: (delta: string) => void,
   onDone?: () => void,
 ): EventSource {
-  const es = new EventSource(`${API_BASE}/meetings/${id}/summary/stream`);
+  const es = new EventSource(`${API_BASE}/meetings/${id}/summary/stream`, {
+    withCredentials: true,
+  });
   es.onmessage = (e) => {
     if (e.data === "[DONE]") {
       es.close();
@@ -361,6 +431,7 @@ export const listChatMessages = (id: string): Promise<ChatMessage[]> =>
 export async function clearChatMessages(id: string): Promise<void> {
   const res = await fetch(`${API_BASE}/meetings/${id}/chat/messages`, {
     method: "DELETE",
+    credentials: "include",
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
@@ -382,6 +453,7 @@ export function streamChatAsk(
     try {
       res = await fetch(`${API_BASE}/meetings/${id}/chat/ask`, {
         method: "POST",
+        credentials: "include",
         headers: {
           "Content-Type": "application/json",
           Accept: "text/event-stream",

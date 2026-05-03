@@ -1,11 +1,10 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, FileText, MessagesSquare } from "lucide-react";
+import { AlertTriangle, FileText, MessagesSquare, Sparkles } from "lucide-react";
 
-import { Card, CardContent } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/empty-state";
+import { PanelHeader } from "@/components/panel-header";
 import { getSummary, type SummaryRead } from "@/lib/api";
 import { dirOf } from "@/lib/rtl";
 
@@ -22,12 +21,13 @@ export function QAView({ meetingId }: { meetingId: string }) {
 
   if (isLoading) {
     return (
-      <Card>
-        <CardContent className="space-y-2 py-5">
-          <Skeleton className="h-4 w-3/4" />
-          <Skeleton className="h-4 w-2/3" />
-        </CardContent>
-      </Card>
+      <>
+        <PanelHeader kicker="پرسش و پاسخ" title="…" />
+        <div className="space-y-3">
+          <div className="h-24 rounded-xl animate-shimmer" />
+          <div className="h-24 rounded-xl animate-shimmer" />
+        </div>
+      </>
     );
   }
 
@@ -38,7 +38,7 @@ export function QAView({ meetingId }: { meetingId: string }) {
     return (
       <EmptyState
         icon={AlertTriangle}
-        title="خطا در بارگذاری پرسش‌وپاسخ"
+        title="خطا در بارگذاری پرسش و پاسخ"
         tone="destructive"
       />
     );
@@ -47,50 +47,57 @@ export function QAView({ meetingId }: { meetingId: string }) {
   const items = data?.qa ?? [];
   if (items.length === 0) {
     return (
-      <EmptyState
-        icon={MessagesSquare}
-        title="سؤالی در این جلسه ثبت نشد"
-        hint="هیچ سؤال صریحی در طول گفتگو شناسایی نشد."
-      />
+      <>
+        <PanelHeader kicker="پرسش و پاسخ" title="پرسشی ثبت نشد" />
+        <EmptyState
+          icon={MessagesSquare}
+          title="سؤالی در این جلسه ثبت نشد"
+          hint="هیچ سؤال صریحی در طول گفتگو شناسایی نشد."
+        />
+      </>
     );
   }
 
   return (
-    <div className="space-y-2">
-      {items.map((item, i) => (
-        <Card key={i} className="transition-colors hover:border-foreground/20">
-          <CardContent className="space-y-2 py-4 text-sm">
-            <p
-              className="font-medium leading-7 text-foreground"
-              dir={dirOf(item.question)}
-            >
-              <span className="me-1.5 inline-flex size-5 items-center justify-center rounded-md bg-primary/10 text-[10px] font-bold text-primary">
-                س
-              </span>
-              {item.question}
-            </p>
-            <p
-              className={
-                item.answer
-                  ? "leading-7 text-foreground/85"
-                  : "italic text-muted-foreground leading-7"
-              }
-              dir={dirOf(item.answer ?? "")}
-            >
-              {item.answer ? (
-                <>
-                  <span className="me-1.5 inline-flex size-5 items-center justify-center rounded-md bg-success/15 text-[10px] font-bold text-success">
-                    ج
+    <>
+      <PanelHeader
+        kicker="پرسش و پاسخ"
+        title={`${items.length.toLocaleString("fa-IR")} پرسش پاسخ داده شد`}
+      />
+      <div className="flex flex-col gap-3">
+        {items.map((qa, i) => (
+          <article
+            key={i}
+            className="overflow-hidden rounded-2xl border border-line bg-surface"
+          >
+            <div className="px-6 pb-2.5 pt-5">
+              <p
+                dir={dirOf(qa.question)}
+                className="text-[15px] font-semibold leading-7 text-ink"
+              >
+                {qa.question}
+              </p>
+            </div>
+            <div className="border-t border-dashed border-line-soft px-6 pb-5 pt-4">
+              {qa.answer ? (
+                <div className="flex gap-3">
+                  <span className="grid size-6 shrink-0 place-items-center rounded-md bg-brand-soft text-brand">
+                    <Sparkles className="size-3" />
                   </span>
-                  {item.answer}
-                </>
+                  <p
+                    dir={dirOf(qa.answer)}
+                    className="text-[13.5px] leading-7 text-ink-2"
+                  >
+                    {qa.answer}
+                  </p>
+                </div>
               ) : (
-                "بی‌پاسخ ماند"
+                <p className="italic text-[13px] text-ink-4">بی‌پاسخ ماند</p>
               )}
-            </p>
-          </CardContent>
-        </Card>
-      ))}
-    </div>
+            </div>
+          </article>
+        ))}
+      </div>
+    </>
   );
 }

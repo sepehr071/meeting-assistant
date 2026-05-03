@@ -7,7 +7,6 @@ import {
   getMeeting,
   type MeetingStatus as MeetingStatusValue,
 } from "@/lib/api";
-import { Badge } from "@/components/ui/badge";
 import {
   Tooltip,
   TooltipContent,
@@ -21,13 +20,62 @@ const IN_FLIGHT: ReadonlySet<MeetingStatusValue> = new Set([
   "summarizing",
 ]);
 
-const LABELS: Record<MeetingStatusValue, string> = {
-  uploaded: "در صف",
-  transcribing: "درحال رونویسی",
-  summarizing: "درحال خلاصه‌سازی",
-  done: "آماده",
-  failed: "خطا",
-};
+interface PillStyle {
+  label: string;
+  bg: string;
+  fg: string;
+  dot: string;
+  animate: boolean;
+}
+
+function styleFor(
+  status: MeetingStatusValue,
+  isCancelled: boolean,
+): PillStyle {
+  if (status === "done") {
+    return {
+      label: "آماده",
+      bg: "oklch(0.95 0.05 155)",
+      fg: "oklch(0.32 0.10 155)",
+      dot: "var(--success)",
+      animate: false,
+    };
+  }
+  if (status === "failed") {
+    if (isCancelled) {
+      return {
+        label: "متوقف شده",
+        bg: "var(--bg-soft)",
+        fg: "var(--ink-3)",
+        dot: "var(--ink-4)",
+        animate: false,
+      };
+    }
+    return {
+      label: "خطا",
+      bg: "oklch(0.96 0.05 25)",
+      fg: "oklch(0.45 0.18 25)",
+      dot: "var(--destructive)",
+      animate: false,
+    };
+  }
+  if (status === "uploaded") {
+    return {
+      label: "در صف",
+      bg: "var(--bg-soft)",
+      fg: "var(--ink-3)",
+      dot: "var(--ink-4)",
+      animate: true,
+    };
+  }
+  return {
+    label: status === "transcribing" ? "درحال رونویسی" : "درحال خلاصه‌سازی",
+    bg: "oklch(0.96 0.04 270)",
+    fg: "var(--brand-ink)",
+    dot: "var(--brand)",
+    animate: true,
+  };
+}
 
 export interface MeetingStatusProps {
   meetingId: string;
@@ -54,69 +102,51 @@ export function MeetingStatus({
   if (!status) {
     if (isLoading) {
       return (
-        <Badge variant="secondary" className={className}>
+        <span
+          className={cn(
+            "inline-flex items-center gap-1.5 rounded-full bg-bg-soft px-2.5 py-0.5 text-[11px] font-medium text-ink-4",
+            className,
+          )}
+        >
           …
-        </Badge>
+        </span>
       );
     }
     return null;
   }
 
-  const inFlight = IN_FLIGHT.has(status);
   const isCancelled =
     status === "failed" && data?.error_message === CANCELLED_SENTINEL;
-  const label = isCancelled ? "متوقف شده" : LABELS[status];
+  const s = styleFor(status, isCancelled);
 
-  const dotClass =
-    status === "done"
-      ? "bg-success"
-      : status === "failed"
-        ? isCancelled
-          ? "bg-muted-foreground"
-          : "bg-destructive"
-        : status === "uploaded"
-          ? "bg-muted-foreground"
-          : "bg-primary";
-
-  const variant: "default" | "secondary" | "destructive" =
-    status === "done"
-      ? "default"
-      : status === "failed"
-        ? isCancelled
-          ? "secondary"
-          : "destructive"
-        : "secondary";
-
-  const badge = (
-    <Badge
-      variant={variant}
+  const pill = (
+    <span
       className={cn(
-        "gap-1.5 transition-colors duration-300",
-        status === "done" &&
-          "bg-success text-success-foreground border-transparent",
+        "inline-flex items-center gap-1.5 rounded-full px-2.5 py-[3px] text-[11px] font-medium",
         className,
       )}
+      style={{ background: s.bg, color: s.fg }}
     >
       <span
         className={cn(
           "size-1.5 rounded-full",
-          dotClass,
-          inFlight && "animate-pulse-dot",
+          s.animate && "animate-pulse-dot",
         )}
+        style={{ background: s.dot }}
         aria-hidden="true"
       />
-      <span>{label}</span>
-    </Badge>
+      <span>{s.label}</span>
+    </span>
   );
 
   if (status === "failed" && data?.error_message && !isCancelled) {
     return (
       <Tooltip>
-        <TooltipTrigger render={<span tabIndex={0}>{badge}</span>} />
+        <TooltipTrigger render={<span tabIndex={0}>{pill}</span>} />
         <TooltipContent>{data.error_message}</TooltipContent>
       </Tooltip>
     );
   }
 
-  return badge;
+  return pill;
 }

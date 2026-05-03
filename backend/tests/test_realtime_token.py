@@ -59,10 +59,15 @@ async def test_issue_token_raises_on_missing_token_key(
 
 
 async def test_router_returns_pydantic_model(mocker: Any) -> None:
+    from app.auth import get_current_user
+    from app.models import User
     from app.routers.realtime import router
 
     app = FastAPI()
     app.include_router(router, prefix="/api/realtime")
+
+    fake_user = User(id="fake-user-id", username="fake", password_hash="x")
+    app.dependency_overrides[get_current_user] = lambda: fake_user
 
     mocker.patch.object(
         realtime_token_module,
