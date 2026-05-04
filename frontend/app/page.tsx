@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import {
   Calendar,
@@ -126,9 +127,17 @@ function MeetingRow({
 }
 
 function MeetingsList() {
+  const searchParams = useSearchParams();
+  const initialQ = searchParams?.get("q") ?? "";
   const [seriesId, setSeriesId] = useState<string | null>(null);
   const [tagIds, setTagIds] = useState<string[]>([]);
-  const [q, setQ] = useState("");
+  const [q, setQ] = useState(initialQ);
+
+  // sync when nav search pushes a new ?q= while already on home
+  useEffect(() => {
+    const next = searchParams?.get("q") ?? "";
+    setQ(next);
+  }, [searchParams]);
 
   const { data: seriesList } = useQuery({
     queryKey: ["series"],
@@ -374,7 +383,9 @@ export default function HomePage() {
       <div className="mt-7">
         <UploadSection />
       </div>
-      <MeetingsList />
+      <Suspense fallback={null}>
+        <MeetingsList />
+      </Suspense>
     </main>
   );
 }

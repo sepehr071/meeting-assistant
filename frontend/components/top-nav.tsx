@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { useRef, useState } from "react";
 import { AudioLines, LogOut, Search } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -13,6 +14,11 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { useAuth } from "@/app/auth-provider";
 
 const NAV = [
@@ -23,7 +29,11 @@ const NAV = [
 
 export function TopNav() {
   const pathname = usePathname() ?? "/";
+  const router = useRouter();
   const { user, logout } = useAuth();
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [term, setTerm] = useState("");
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
   // Hide nav on auth pages and meeting detail (own shell).
   if (pathname === "/login" || pathname === "/register") return null;
@@ -32,6 +42,27 @@ export function TopNav() {
   }
 
   const initial = user?.username?.[0]?.toUpperCase() ?? "؟";
+
+  async function handleLogout() {
+    try {
+      await logout();
+    } catch {
+      // ignore — fall through to hard redirect
+    }
+    // hard reload guarantees auth state + react-query cache reset
+    window.location.assign("/login");
+  }
+
+  function submitSearch(e: React.FormEvent) {
+    e.preventDefault();
+    const q = term.trim();
+    setSearchOpen(false);
+    if (q) {
+      router.push(`/?q=${encodeURIComponent(q)}`);
+    } else {
+      router.push("/");
+    }
+  }
 
   return (
     <header
@@ -84,13 +115,47 @@ export function TopNav() {
         </nav>
 
         <div className="ms-auto flex items-center gap-2.5">
-          <button
-            type="button"
-            aria-label="جستجو"
-            className="grid size-8 place-items-center rounded-lg border border-line bg-surface text-ink-2 transition-colors hover:bg-bg-soft"
+          <Popover
+            open={searchOpen}
+            onOpenChange={(o) => {
+              setSearchOpen(o);
+              if (o) {
+                // focus input after popover paints
+                requestAnimationFrame(() => inputRef.current?.focus());
+              }
+            }}
           >
-            <Search className="size-3.5" />
-          </button>
+            <PopoverTrigger
+              render={
+                <button
+                  type="button"
+                  aria-label="جستجو"
+                  className="grid size-8 place-items-center rounded-lg border border-line bg-surface text-ink-2 transition-colors hover:bg-bg-soft"
+                >
+                  <Search className="size-3.5" />
+                </button>
+              }
+            />
+            <PopoverContent align="end" className="w-72">
+              <form onSubmit={submitSearch} className="flex items-center gap-2">
+                <input
+                  ref={inputRef}
+                  dir="auto"
+                  value={term}
+                  onChange={(e) => setTerm(e.target.value)}
+                  placeholder="جستجو در عناوین جلسات…"
+                  className="h-8 flex-1 rounded-md border border-line bg-surface px-2.5 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                />
+                <button
+                  type="submit"
+                  className="grid size-8 place-items-center rounded-md bg-ink text-white transition-opacity hover:opacity-90"
+                  aria-label="جستجو"
+                >
+                  <Search className="size-3.5" />
+                </button>
+              </form>
+            </PopoverContent>
+          </Popover>
           <DropdownMenu>
             <DropdownMenuTrigger
               aria-label="حساب کاربری"
@@ -113,9 +178,7 @@ export function TopNav() {
               )}
               <DropdownMenuSeparator />
               <DropdownMenuItem
-                onClick={() => {
-                  void logout();
-                }}
+                onClick={handleLogout}
                 className="text-red-600 focus:text-red-700"
               >
                 <LogOut className="size-3.5" />
