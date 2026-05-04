@@ -7,14 +7,6 @@ import { AudioLines, LogOut, Search } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
   Popover,
   PopoverContent,
   PopoverTrigger,
@@ -30,8 +22,9 @@ const NAV = [
 export function TopNav() {
   const pathname = usePathname() ?? "/";
   const router = useRouter();
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
   const [searchOpen, setSearchOpen] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
   const [term, setTerm] = useState("");
   const inputRef = useRef<HTMLInputElement | null>(null);
 
@@ -43,12 +36,14 @@ export function TopNav() {
 
   const initial = user?.username?.[0]?.toUpperCase() ?? "؟";
 
-  async function handleLogout() {
-    try {
-      await logout();
-    } catch {
-      // ignore — fall through to hard redirect
-    }
+  function handleLogout() {
+    setAccountOpen(false);
+    // fire-and-forget; do NOT await — avoid any react-query interaction that
+    // could throw and block the redirect.
+    fetch(
+      `${process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000/api"}/auth/logout`,
+      { method: "POST", credentials: "include" },
+    ).catch(() => {});
     // hard reload guarantees auth state + react-query cache reset
     window.location.assign("/login");
   }
@@ -120,7 +115,6 @@ export function TopNav() {
             onOpenChange={(o) => {
               setSearchOpen(o);
               if (o) {
-                // focus input after popover paints
                 requestAnimationFrame(() => inputRef.current?.focus());
               }
             }}
@@ -156,36 +150,42 @@ export function TopNav() {
               </form>
             </PopoverContent>
           </Popover>
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              aria-label="حساب کاربری"
-              className="grid size-8 place-items-center rounded-full text-white text-xs font-semibold outline-none ring-offset-2 transition-transform hover:scale-105 focus-visible:ring-2 focus-visible:ring-ink/30"
-              style={{
-                background:
-                  "linear-gradient(135deg, oklch(0.7 0.10 270), oklch(0.55 0.14 285))",
-              }}
-            >
-              {initial}
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" sideOffset={8}>
+
+          <Popover open={accountOpen} onOpenChange={setAccountOpen}>
+            <PopoverTrigger
+              render={
+                <button
+                  type="button"
+                  aria-label="حساب کاربری"
+                  className="grid size-8 place-items-center rounded-full text-white text-xs font-semibold outline-none ring-offset-2 transition-transform hover:scale-105 focus-visible:ring-2 focus-visible:ring-ink/30"
+                  style={{
+                    background:
+                      "linear-gradient(135deg, oklch(0.7 0.10 270), oklch(0.55 0.14 285))",
+                  }}
+                >
+                  {initial}
+                </button>
+              }
+            />
+            <PopoverContent align="end" className="w-56 p-0">
               {user && (
-                <DropdownMenuLabel className="font-normal">
-                  <div className="text-[12px] text-ink-3">وارد شده به‌عنوان</div>
+                <div className="border-b border-line px-3 py-2">
+                  <div className="text-[11px] text-ink-3">وارد شده به‌عنوان</div>
                   <div className="truncate text-[13px] font-medium text-ink">
                     {user.username}
                   </div>
-                </DropdownMenuLabel>
+                </div>
               )}
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
+              <button
+                type="button"
                 onClick={handleLogout}
-                className="text-red-600 focus:text-red-700"
+                className="flex w-full items-center gap-2 px-3 py-2 text-right text-[13px] text-red-600 transition-colors hover:bg-red-50 focus:bg-red-50 focus:outline-none"
               >
                 <LogOut className="size-3.5" />
                 خروج
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+              </button>
+            </PopoverContent>
+          </Popover>
         </div>
       </div>
     </header>
