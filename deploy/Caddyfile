@@ -1,0 +1,29 @@
+# Reverse proxy + automatic HTTPS for Meeting Assistant.
+#
+# Caddy provisions and renews a Let's Encrypt certificate automatically, so the
+# session cookie travels over TLS. After this is in front, set in backend/.env:
+#     SESSION_COOKIE_SECURE=true
+# and ONLY if the frontend and backend are served from different hostnames:
+#     SESSION_SAME_SITE=none
+# (config.py fails fast if you set SameSite=none without Secure.)
+#
+# Run:  caddy run --config deploy/Caddyfile
+# Replace meet.example.com with your domain and the ports if customized.
+
+meet.example.com {
+    encode gzip zstd
+
+    # Backend API, including SSE + WebSocket. flush_interval -1 disables
+    # response buffering so streamed tokens reach the browser immediately
+    # (the Caddy equivalent of nginx `X-Accel-Buffering: no`).
+    handle /api/* {
+        reverse_proxy localhost:8000 {
+            flush_interval -1
+        }
+    }
+
+    # Next.js frontend.
+    handle {
+        reverse_proxy localhost:3000
+    }
+}

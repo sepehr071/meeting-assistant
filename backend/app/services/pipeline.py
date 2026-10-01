@@ -1,0 +1,434 @@
+from __future__ import annotations
+
+import asyncio
+import time
+import traceback
+from pathlib import Path
+
+from sqlalchemy import select
+
+from app.db import SessionLocal
+from app.config import settings
+from app.models import EmailTone, Meeting, MeetingStatus, Series, Speaker, Summary, Transcript
+from app.services import glossary, speakers, summarizer
+from app.services.summarizer import EMAIL_TONE_CASUAL, EMAIL_TONE_FORMAL
+from app.services.transcription import TranscriptionResult, transcribe_async
+
+
+_GAP_THRESHOLD_S = 1.2
+
+
+def _t(msg: str) -> None:
+    print(f"[TIMING] {msg}", flush=True)
+
+
+class _Logger:
+    @staticmethod
+    def info(fmt: str, *args: object) -> None:
+        _t(fmt % args if args else fmt)
+
+
+logger = _Logger()
+
+# Cancellation: in-memory map of asyncio.Event keyed by meeting_id. Set by the
+# cancel endpoint, polled at safe boundaries inside the pipeline.
+CANCELLED_SENTINEL = "cancelled by user"
+_cancel_events: dict[str, asyncio.Event] = {}
+
+
+class _CancelledByUser(Exception):
+    """Raised inside the pipeline at a safe boundary when the user requested cancel."""
+
+
+def _check_cancel(ev: asyncio.Event) -> None:
+    if ev.is_set():
+        raise _CancelledByUser
+
+
+async def request_cancel(meeting_id: str) -> bool:
+    """Signal an in-flight pipeline to abort at its next safe boundary.
+
+    Best-effort: ElevenLabs Scribe HTTP can't be torn down mid-call, so the
+    abort happens after the next checkpoint. The router flips status
+    immediately for instant UI feedback.
+    """
+    ev = _cancel_events.get(meeting_id)
+    if ev is None:
+        return False
+    ev.set()
+    return True
+
+
+def _word_text(word: dict) -> str:
+    return word.get("text", "") or ""
+
+
+def _word_speaker(word: dict) -> str | None:
+    sid = word.get("speaker_id")
+    if sid is None:
+        return None
+    return str(sid)
+
+
+def _word_start(word: dict) -> float | None:
+    val = word.get("start")
+    if val is None:
+        return None
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return None
+
+
+def _word_end(word: dict) -> float | None:
+    val = word.get("end")
+    if val is None:
+        return None
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return None
+
+
+def _segment_words(
+    words: list[dict],
+) -> list[tuple[str, float, float, str]]:
+    """Group consecutive same-speaker words into segments. Split on speaker
+    change or word.start - prev_end > 1.2s.
+    """
+    segments: list[tuple[str, float, float, str]] = []
+
+    cur_speaker: str | None = None
+    cur_start: float | None = None
+    cur_end: float | None = None
+    cur_text_parts: list[str] = []
+
+    def flush() -> None:
+        if cur_speaker is None or cur_start is None or cur_end is None:
+            return
+        text = "".join(cur_text_parts).strip()
+        if not text:
+            return
+        segments.append((cur_speaker, cur_start, cur_end, text))
+
+    for word in words:
+        speaker = _word_speaker(word) or "speaker_0"
+        start = _word_start(word)
+        end = _word_end(word)
+        text = _word_text(word)
+
+        # If we have no timing, fall back to previous endpoints to keep grouping.
+        effective_start = start if start is not None else cur_end
+        effective_end = end if end is not None else effective_start
+
+        gap = None
+        if cur_end is not None and effective_start is not None:
+            gap = effective_start - cur_end
+
+        speaker_changed = cur_speaker is not None and speaker != cur_speaker
+        gap_too_big = gap is not None and gap > _GAP_THRESHOLD_S
+
+        if cur_speaker is None:
+            cur_speaker = speaker
+            cur_start = effective_start if effective_start is not None else 0.0
+            cur_end = effective_end if effective_end is not None else cur_start
+            cur_text_parts = [text]
+            continue
+
+        if speaker_changed or gap_too_big:
+            flush()
+            cur_speaker = speaker
+            cur_start = effective_start if effective_start is not None else (cur_end or 0.0)
+            cur_end = effective_end if effective_end is not None else cur_start
+            cur_text_parts = [text]
+        else:
+            cur_text_parts.append(text)
+            if effective_end is not None:
+                cur_end = effective_end
+
+    flush()
+    return segments
+
+
+def build_diarized_prompt(words: list[dict]) -> str:
+    """`[speaker_id start-end] text` lines for the LLM prompt."""
+    return "\n".join(
+        f"[{speaker} {start:.2f}-{end:.2f}] {text}"
+        for speaker, start, end, text in _segment_words(words)
+    )
+
+
+def build_minutes_segments(words: list[dict]) -> list[dict]:
+    """Server-side minutes built directly from the diarized words. Bypasses the
+    LLM so 1h+ meetings don't get truncated by output-token limits.
+    """
+    return [
+        {
+            "speaker_id": speaker,
+            "text": text,
+            "start_s": start,
+            "end_s": end,
+        }
+        for speaker, start, end, text in _segment_words(words)
+    ]
+
+
+async def _set_status(meeting_id: str, status: MeetingStatus, *, error: str | None = None) -> None:
+    async with SessionLocal() as session:
+        meeting = await session.get(Meeting, meeting_id)
+        if meeting is None:
+            return
+        meeting.status = status
+        if error is not None:
+            meeting.error_message = error
+        await session.commit()
+
+
+async def _persist_transcript(meeting_id: str, result: TranscriptionResult) -> None:
+    async with SessionLocal() as session:
+        meeting = await session.get(Meeting, meeting_id)
+        if meeting is None:
+            return
+
+        existing = await session.get(Transcript, meeting_id)
+        if existing is not None:
+            existing.raw_json = result.raw
+            existing.plain_text = result.plain_text
+            existing.words_json = result.words
+        else:
+            session.add(
+                Transcript(
+                    meeting_id=meeting_id,
+                    raw_json=result.raw,
+                    plain_text=result.plain_text,
+                    words_json=result.words,
+                )
+            )
+
+        existing_speakers = {
+            sp.speaker_id
+            for sp in (
+                await session.execute(
+                    select(Speaker).where(Speaker.meeting_id == meeting_id)
+                )
+            )
+            .scalars()
+            .all()
+        }
+        for sid in result.speaker_ids:
+            if sid in existing_speakers:
+                continue
+            session.add(Speaker(meeting_id=meeting_id, speaker_id=sid, display_name=None))
+
+        if result.language_code:
+            meeting.language = result.language_code
+        meeting.status = MeetingStatus.SUMMARIZING
+        await session.commit()
+
+
+async def _apply_speaker_names_from_summary(
+    meeting_id: str, mapping: list[dict] | None
+) -> None:
+    if not mapping:
+        return
+    async with SessionLocal() as session:
+        meeting = await session.get(Meeting, meeting_id)
+        if meeting is None:
+            return
+        await speakers.apply_speaker_names(session, meeting, mapping)
+
+
+async def _load_transcript_words(meeting_id: str) -> list[dict] | None:
+    async with SessionLocal() as session:
+        transcript = await session.get(Transcript, meeting_id)
+        if transcript is None:
+            return None
+        return list(transcript.words_json or [])
+
+
+async def _persist_summary(meeting_id: str, data: dict, *, email_tone: str) -> str:
+    async with SessionLocal() as session:
+        meeting = await session.get(Meeting, meeting_id)
+        if meeting is None:
+            raise RuntimeError(f"meeting {meeting_id} disappeared mid-pipeline")
+
+        email_obj = data.get("email_draft") or {}
+        summary = Summary(
+            meeting_id=meeting_id,
+            exec_summary=data.get("exec_summary", "") or "",
+            action_items_json=list(data.get("action_items") or []),
+            decisions_json=list(data.get("decisions") or []),
+            minutes_json=list(data.get("minutes") or []),
+            qa_json=list(data.get("qa") or []),
+            open_questions_json=list(data.get("open_questions") or []),
+            email_subject=(email_obj.get("subject") or None),
+            email_draft=(email_obj.get("body") or None),
+            email_tone=email_tone,
+            model=settings.OPENROUTER_MODEL,
+        )
+        session.add(summary)
+        meeting.status = MeetingStatus.DONE
+        meeting.error_message = None
+        await session.commit()
+        await session.refresh(summary)
+        return summary.id
+
+
+class _MeetingCtx:
+    __slots__ = ("num_speakers", "meeting_brief", "series_id", "email_tone", "keyterms")
+
+    def __init__(
+        self,
+        num_speakers: int | None,
+        meeting_brief: str | None,
+        series_id: str | None,
+        email_tone: str,
+        keyterms: list[str],
+    ) -> None:
+        self.num_speakers = num_speakers
+        self.meeting_brief = meeting_brief
+        self.series_id = series_id
+        self.email_tone = email_tone
+        self.keyterms = keyterms
+
+
+async def _load_meeting_context(meeting_id: str) -> _MeetingCtx | None:
+    async with SessionLocal() as session:
+        meeting = await session.get(Meeting, meeting_id)
+        if meeting is None:
+            return None
+        series_id = meeting.series_id
+        email_tone = EMAIL_TONE_FORMAL
+        keyterms: list[str] = []
+        if series_id:
+            series = await session.get(Series, series_id)
+            if series is not None:
+                email_tone = (
+                    EMAIL_TONE_CASUAL
+                    if series.email_tone == EmailTone.CASUAL
+                    else EMAIL_TONE_FORMAL
+                )
+            keyterms = await glossary.get_active_keyterms(session, series_id)
+        return _MeetingCtx(
+            num_speakers=meeting.num_speakers,
+            meeting_brief=meeting.meeting_brief,
+            series_id=series_id,
+            email_tone=email_tone,
+            keyterms=keyterms,
+        )
+
+
+async def run_pipeline(meeting_id: str) -> None:
+    """Drive a meeting through transcribing -> summarizing -> done.
+    Idempotent: returns immediately if status is already DONE.
+    """
+    cancel_ev = asyncio.Event()
+    _cancel_events[meeting_id] = cancel_ev
+    try:
+        async with SessionLocal() as session:
+            meeting = await session.get(Meeting, meeting_id)
+            if meeting is None:
+                return
+            if meeting.status == MeetingStatus.DONE:
+                return
+            audio_path = meeting.audio_path
+            meeting.status = MeetingStatus.TRANSCRIBING
+            meeting.error_message = None
+            await session.commit()
+
+        t_pipe = time.perf_counter()
+        logger.info("[%s] pipeline start audio=%s", meeting_id, audio_path)
+
+        _check_cancel(cancel_ev)
+        t0 = time.perf_counter()
+        ctx = await _load_meeting_context(meeting_id)
+        logger.info("[%s] ctx loaded in %.2fs num_speakers=%s keyterms=%d tone=%s",
+                    meeting_id, time.perf_counter()-t0,
+                    ctx.num_speakers if ctx else None,
+                    len(ctx.keyterms) if ctx and ctx.keyterms else 0,
+                    ctx.email_tone if ctx else None)
+        if ctx is None:
+            return
+
+        t0 = time.perf_counter()
+        result = await transcribe_async(
+            Path(audio_path),
+            num_speakers=ctx.num_speakers,
+            keyterms=ctx.keyterms or None,
+        )
+        logger.info("[%s] transcribe DONE in %.2fs words=%d speakers=%d",
+                    meeting_id, time.perf_counter()-t0,
+                    len(result.words), len(result.speaker_ids))
+        _check_cancel(cancel_ev)
+        t0 = time.perf_counter()
+        await _persist_transcript(meeting_id, result)
+        logger.info("[%s] persist transcript %.2fs", meeting_id, time.perf_counter()-t0)
+        _check_cancel(cancel_ev)
+
+        t0 = time.perf_counter()
+        words = await _load_transcript_words(meeting_id)
+        if not words:
+            raise RuntimeError("transcript persisted but words_json is empty")
+        prompt = build_diarized_prompt(words)
+        logger.info("[%s] prompt built %.2fs len=%d chars", meeting_id,
+                    time.perf_counter()-t0, len(prompt))
+
+        t0 = time.perf_counter()
+        data = await summarizer.summarize(
+            prompt, context=ctx.meeting_brief, email_tone=ctx.email_tone
+        )
+        logger.info("[%s] summarize DONE in %.2fs", meeting_id, time.perf_counter()-t0)
+        _check_cancel(cancel_ev)
+        data["minutes"] = build_minutes_segments(words)
+        t0 = time.perf_counter()
+        await _apply_speaker_names_from_summary(meeting_id, data.get("speaker_names"))
+        await _persist_summary(meeting_id, data, email_tone=ctx.email_tone)
+        logger.info("[%s] persist summary + speakers %.2fs", meeting_id, time.perf_counter()-t0)
+        logger.info("[%s] pipeline TOTAL %.2fs", meeting_id, time.perf_counter()-t_pipe)
+    except _CancelledByUser:
+        # Router already flipped status to FAILED + sentinel; leave it alone.
+        return
+    except Exception:
+        await _set_status(
+            meeting_id,
+            MeetingStatus.FAILED,
+            error=traceback.format_exc(),
+        )
+    finally:
+        _cancel_events.pop(meeting_id, None)
+
+
+async def regenerate_summary(meeting_id: str) -> str:
+    """Re-run summarization against an existing transcript. Returns new Summary id."""
+    cancel_ev = asyncio.Event()
+    _cancel_events[meeting_id] = cancel_ev
+    try:
+        _check_cancel(cancel_ev)
+        words = await _load_transcript_words(meeting_id)
+        if not words:
+            raise RuntimeError("cannot regenerate: no transcript for this meeting")
+
+        ctx = await _load_meeting_context(meeting_id)
+        if ctx is None:
+            raise RuntimeError(f"meeting {meeting_id} not found")
+        await _set_status(meeting_id, MeetingStatus.SUMMARIZING, error=None)
+
+        prompt = build_diarized_prompt(words)
+        data = await summarizer.summarize(
+            prompt, context=ctx.meeting_brief, email_tone=ctx.email_tone
+        )
+        _check_cancel(cancel_ev)
+        data["minutes"] = build_minutes_segments(words)
+        await _apply_speaker_names_from_summary(meeting_id, data.get("speaker_names"))
+        return await _persist_summary(meeting_id, data, email_tone=ctx.email_tone)
+    except _CancelledByUser:
+        return ""
+    except Exception:
+        await _set_status(
+            meeting_id,
+            MeetingStatus.FAILED,
+            error=traceback.format_exc(),
+        )
+        raise
+    finally:
+        _cancel_events.pop(meeting_id, None)
